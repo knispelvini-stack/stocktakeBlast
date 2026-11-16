@@ -66,22 +66,28 @@ export default function App() {
   const userId = session?.user?.id ?? null
   const isAnon = !!session?.user?.is_anonymous
 
+  // Reads the user from the auth client, not from render state: the PIN
+  // screen calls this right after signInAnonymously(), before React has
+  // re-rendered with the new session (a stale userId made it a no-op).
   const loadOrgs = useCallback(async () => {
-    if (!engine || !userId) return
+    if (!engine) return
+    const { data } = await supabase.auth.getSession()
+    const uid = data.session?.user?.id
+    if (!uid) return
     setOrgsError(null)
     try {
-      const list = await engine.loadOrgs(userId)
+      const list = await engine.loadOrgs(uid)
       setOrgs(list)
       setOrgId(cur => (list.some(o => o.org_id === cur) ? cur : list[0]?.org_id ?? null))
     } catch (e) {
       setOrgsError(e.message)
     }
-  }, [engine, userId])
+  }, [engine])
 
   useEffect(() => {
     setOrgs(null)
     loadOrgs()
-  }, [loadOrgs])
+  }, [loadOrgs, userId])
 
   const current = orgs?.find(o => o.org_id === orgId)
   // Name shown in history for this device's own (not yet synced) scans.

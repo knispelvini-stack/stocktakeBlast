@@ -56,6 +56,20 @@ async function scan(page, code) {
   await page.waitForFunction(c => [...document.querySelectorAll('tbody tr')].some(tr => tr.textContent.includes(c) && tr.textContent.includes('Joao')), code)
   step(`staff scan synced; History shows “Joao” as who moved ${code}`)
 
+  // a second device gets the PIN right on the FIRST try (regression: it used
+  // to bounce back to the PIN screen because of a stale user id)
+  const staff2 = await browser.newContext({ viewport: { width: 1000, height: 800 } })
+  const p2 = await staff2.newPage()
+  p2.on('pageerror', e => errors.push(e.message))
+  await p2.goto('http://localhost:5190/')
+  await p2.waitForSelector('text=Company PIN')
+  await p2.fill('input[autocomplete="name"]', 'Maria')
+  await p2.fill('.pin-input', '482915')
+  await p2.click('button:has-text("Enter")')
+  await p2.waitForSelector('text=Ready to check OUT', { timeout: 10000 })
+  await staff2.close()
+  step('second device: right PIN on the first try goes straight in')
+
   // reload: still signed in (PIN only once per device)
   await page.reload()
   await page.waitForSelector('text=Ready to check OUT')
