@@ -25,7 +25,7 @@ export function createSyncEngine({
   setTimer = (fn, ms) => setTimeout(fn, ms),
   clearTimer = t => clearTimeout(t),
 }) {
-  let ctx = { userId: null, email: null }
+  let ctx = { userId: null, label: null }
   let state = {
     online: isOnline(),
     syncing: false,
@@ -245,7 +245,7 @@ export function createSyncEngine({
             reference: ev.reference,
             applied: res.result === 'ok',
             scanned_at: ev.scanned_at,
-            user_email: ctx.email,
+            user_label: ctx.label,
           })
         }
       } else if (ev.kind === 'scan') {
@@ -448,8 +448,8 @@ export function createSyncEngine({
   }
 
   // ───────── lifecycle ─────────
-  async function setUser(userId, email = null) {
-    ctx = { userId, email }
+  async function setUser(userId, label = null) {
+    ctx = { userId, label }
     await refreshCounts()
     if (userId) schedule(0)
   }

@@ -225,3 +225,6 @@ button:disabled { opacity: 0.45; cursor: default; }
   .sync-main { font-size: 12px; padding: 6px 8px; }
   .topbar { flex-wrap: wrap; }
 }
+
+/* PIN */
+.pin-input { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 22px; letter-spacing: 0.3em; text-align: center; }

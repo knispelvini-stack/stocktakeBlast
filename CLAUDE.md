@@ -1,6 +1,6 @@
 # stocktakeBlast
 
-Standalone multi-tenant inventory SaaS (unrelated to lobase). One barcode label per physical unit,
+Single-company inventory app (unrelated to lobase), on a multi-tenant schema. One barcode label per physical unit,
 read by keyboard-wedge (HID) USB/Bluetooth scanners. See README.md for the full picture.
 
 ## Rules
@@ -19,5 +19,9 @@ read by keyboard-wedge (HID) USB/Bluetooth scanners. See README.md for the full 
   the server row id (idempotency) — keep it that way. Conflicts resolve by `scanned_at`.
 - Changes to sync behaviour need tests in `src/lib/sync.test.js` and, for SQL, `smoke.sql`;
   run `npm run test:e2e` before shipping.
+- Staff devices are Supabase **anonymous users** (role `authenticated`) that joined via
+  `join_with_pin()`. So `authenticated` means "anyone who can reach the API": every RPC must check
+  `is_member()` (or `_require_owner()` for admin actions); never grant something to
+  `authenticated` assuming it implies a real account.
 - No React Router — tab state in `App.jsx`.
 - After clicking buttons on scan screens, blur them, so a scanner's Enter can't re-trigger them.

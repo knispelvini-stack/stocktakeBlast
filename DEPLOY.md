@@ -12,6 +12,7 @@ Supabase to tell Auth the production URL.
    - `supabase/migrations/20261116000000_init.sql`
    - `supabase/migrations/20261117000000_offline_sync.sql`
    - `supabase/migrations/20261118000000_harden_grants.sql`
+   - `supabase/migrations/20261119000000_pin_access.sql`
 
    Or with the CLI: `supabase link --project-ref <ref>` then `supabase db push`.
 4. **Project Settings → API**: copy the **Project URL** and the **anon / publishable** key.
@@ -31,7 +32,26 @@ Supabase to tell Auth the production URL.
 Why `vercel.json` matters: `sw.js` is served with `no-cache`. Without that, browsers keep an old
 service worker and users don't get new versions of the app.
 
-## 3. Supabase Auth → URLs (easy to forget, breaks sign-up)
+## 3. Company, owner and PIN (single company)
+
+The app is for one company. Staff sign in with a shared **company PIN**; the owner signs in with
+email + password to manage the PIN and devices.
+
+1. **Authentication → Sign In / Providers → Anonymous sign-ins: ON.** Each staff device becomes an
+   anonymous user and only gets access after the server checks the PIN. Without this, the PIN
+   screen says "PIN sign-in is not enabled yet".
+2. Create the owner account: **Authentication → Users → Add user** (email + password, auto-confirm).
+3. Create the company and make that user its owner (SQL editor, once):
+
+   ```sql
+   select set_config('request.jwt.claim.sub', (select id::text from auth.users where email = 'OWNER@EMAIL'), false);
+   select public.create_org('Your Company');
+   ```
+4. Open the app → **Owner sign-in** → **Admin** tab → set the PIN (6–12 digits).
+
+Rotating the PIN with "Also sign out every PIN device" is how you lock out someone who left.
+
+## 4. Supabase Auth → URLs (easy to forget, breaks sign-up)
 
 **Authentication → URL Configuration**
 - **Site URL**: your production URL. Confirmation emails link here; the default is
@@ -39,22 +59,16 @@ service worker and users don't get new versions of the app.
 - **Redirect URLs**: add the production URL and, if you use previews,
   `https://*-<your-vercel-team>.vercel.app/**`.
 
-## 4. Email (blocker for real customers)
+## 5. Email (only the owner account uses it)
 
-Supabase's built-in email is for testing only: it is heavily rate-limited and sends only to
-members of your Supabase organisation. Customers signing up will **not** receive the
-confirmation email.
+Staff never receive email (PIN only). The built-in Supabase email is enough for the owner's
+password reset, since it sends to members of your Supabase organisation. Add custom SMTP
+(Resend, Postmark, SES…) only if other people will have email accounts.
 
-Before inviting anyone: **Authentication → Emails → SMTP Settings** → custom SMTP (Resend,
-Postmark, Amazon SES, …) with a domain you own (SPF/DKIM set up at your DNS provider).
+## 6. Check production
 
-For a private pilot only, you can instead turn off **Confirm email** (Authentication →
-Providers → Email). Turn it back on before opening sign-ups.
-
-## 5. Check production
-
-1. Open the production URL → create an account → confirmation email arrives → sign in.
-2. Create a company, a product, generate 3 units, print labels.
+1. On a phone: open the production URL → name + PIN → you're in.
+2. Create a product, generate 3 units, print labels.
 3. **Scanner** tab → scan a label.
 4. Offline test: open the app once online, then disconnect (airplane mode), scan, reload the
    page, reconnect → badge goes to **Synced**, History shows the movements.
