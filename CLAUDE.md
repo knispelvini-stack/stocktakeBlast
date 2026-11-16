@@ -33,4 +33,7 @@ read by keyboard-wedge (HID) USB/Bluetooth scanners. See README.md for the full 
 - Item codes: `BAN-<PREFIX><size>-NN` (banner stems computed by the `products_code_scheme`
   trigger), `CAS-NNN`, blowers by hand. Numbering is per stem via `generate_units()`; never reuse
   numbers, never delete units/products (retire instead). See README "Item codes and labels".
+- Vehicles: `VEH-NN` labels (own namespace — unit codes/stems can't start with VEH). A scanned
+  `VEH-` code on the check-out screen selects the vehicle; it is never a movement. Vehicles are
+  owner-managed and never deleted (`active = false`).
 - After clicking buttons on scan screens, blur them, so a scanner's Enter can't re-trigger them.

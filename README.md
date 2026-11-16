@@ -58,7 +58,20 @@ Every physical piece has one label with a meaningful code:
 - Labels: Code 128 barcode (any scanner) or QR (2D scanners only), with the code printed large.
   On A4 (Avery L7159) codes up to ~13 characters scan comfortably; the app warns above that.
 
+## Vehicles (loading and unloading vans)
 
+The owner registers vehicles in **Settings → Vehicles** (name, optional plate). Each gets a label
+`VEH-01`, `VEH-02`… — print it and stick it inside the van.
+
+- **Loading:** on **Check out / in**, scan the van's label (or pick it), then scan the items.
+  The side panel lists everything on that van right now. Works offline.
+- **Unloading:** switch to **Check IN**, scan the van's label: the panel shows what is **still out
+  with that van**; each scanned item disappears from it. Whatever is left didn't come back.
+- **Overview → Out right now** groups by vehicle; **Activity** shows and filters by vehicle.
+- Unit codes can never start with `VEH-`, so a scan is never ambiguous. Vehicles are never deleted
+  (deactivate instead) and only the owner can add or edit them.
+
+## How the scanner works
 
 A scanner in HID mode types the code very fast and presses Enter. `src/lib/scanDetector.js`
 buffers keys while the gap between them stays under a threshold (default 50 ms — humans type
@@ -67,9 +80,11 @@ listener; the "Type or scan a code" field is the manual fallback (a scanner typi
 
 Scanner checklist: HID/keyboard mode (Bluetooth: pair as keyboard, not SPP), suffix = Enter,
 scanner keyboard language = computer keyboard language, Code 128 enabled. Slow Bluetooth
-scanner? Measure it on the **Scanner** tab and raise the threshold (saved per device).
+scanner? Measure it in **Settings → Scanner** and raise the threshold (saved per device).
+Codes contain hyphens (`BAN-PAW45-01`): check the hyphen comes out right — it is the key most
+affected by a keyboard-language mismatch.
 
-Unit codes are 8 characters from `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` (no 0/O or 1/I).
+Legacy random codes are 8 characters from `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` (no 0/O or 1/I).
 
 ## Offline mode
 
