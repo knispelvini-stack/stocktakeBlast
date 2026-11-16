@@ -95,14 +95,14 @@ export default function HistoryScreen({ engine, orgId, settings, initialCode = '
 
   function exportCsv() {
     const all = [
-      ...pending.map(p => ({ ...p, applied: null, user_email: '', status: 'pending sync' })),
+      ...pending.map(p => ({ ...p, applied: null, user_label: 'this device', status: 'pending sync' })),
       ...(rows ?? []).map(r => ({ ...r, status: r.applied ? 'applied' : 'not applied (late)' })),
     ]
     const head = ['scanned_at', 'code', 'product', 'direction', 'reference', 'user', 'status']
     const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`
     const lines = [head.join(',')].concat(
       all.map(r =>
-        [r.scanned_at, r.code, r.product, r.direction, r.reference, r.user_email, r.status].map(esc).join(','),
+        [r.scanned_at, r.code, r.product, r.direction, r.reference, r.user_label ?? r.user_email, r.status].map(esc).join(','),
       ),
     )
     const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' })
@@ -258,7 +258,7 @@ export default function HistoryScreen({ engine, orgId, settings, initialCode = '
                   )}
                 </td>
                 <td>{r.reference ?? ''}</td>
-                <td className="muted small">{r.user_email ?? ''}</td>
+                <td className="muted small">{r.user_label ?? r.user_email ?? ''}</td>
               </tr>
             ))
           )}

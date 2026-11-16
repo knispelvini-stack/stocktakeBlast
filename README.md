@@ -1,6 +1,6 @@
 # stocktakeBlast
 
-Multi-company inventory SaaS where **every physical unit has its own barcode label**,
+Inventory app for **one company** where **every physical unit has its own barcode label**,
 driven by any USB/Bluetooth barcode scanner in keyboard (HID) mode — no drivers, no app install.
 
 - **Check out / in** — scan units leaving (van, job, loan) and coming back, with an optional reference.
@@ -28,7 +28,16 @@ Local:
 4. `cp .env.example .env` and fill in the project URL and **anon** key.
 5. `npm install && npm run dev`
 
-The first account creates a company and becomes its owner.
+### Access
+
+- **Staff**: name + shared **company PIN**, once per device (stays signed in). Each device is a
+  Supabase anonymous user; the PIN is checked on the server (bcrypt) and wrong PINs are
+  throttled (5 per device / 30 overall per 15 min). History shows the name each device entered.
+- **Owner**: email + password → **Admin** tab: company name, set/rotate PIN, list and remove
+  devices. Setup steps in [DEPLOY.md](DEPLOY.md#3-company-owner-and-pin-single-company).
+
+The database is still multi-tenant (every row has `org_id`, RLS per membership), so a second
+company later is a data step, not a rewrite.
 
 ## How the scanner works
 
@@ -79,7 +88,8 @@ Limits worth knowing:
 
 | Table | Purpose | Client writes |
 |---|---|---|
-| `orgs`, `org_members` | companies and who belongs to them | via `create_org()` only |
+| `orgs`, `org_members` | the company and its members (owner + PIN devices, with display name) | via `join_with_pin()` / owner RPCs; `create_org()` is SQL-only |
+| `org_pins`, `pin_attempts` | bcrypt PIN hash, attempt log for throttling | **none** (no client access) |
 | `products` | product types (name, optional SKU) | insert/update by members, delete by owner |
 | `units` | one row per physical item, `status`: in_stock / out / lost / retired | created via `generate_units()`; members may update (retire); owner deletes |
 | `movements` | audit trail of every check out/in (`scanned_at`, `applied`) | **none** — only via `sync_events()` / `close_count()` |

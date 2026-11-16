@@ -36,7 +36,9 @@ set role authenticated;
 
 -- ═══════════ user A: setup ═══════════
 select pg_temp.as_user('aaaaaaaa-0000-0000-0000-000000000001') \gset
+reset role;
 select create_org('Org A') as org_a \gset
+set role authenticated;
 insert into products (org_id, name) values (:'org_a', 'Castle 4x4') returning id as prod_a \gset
 select count(*) as n from generate_units(:'prod_a', 5) \gset
 select pg_temp.check(:n = 5, 'generate 5 units');
@@ -98,7 +100,7 @@ select pg_temp.check((:'r'::jsonb)->2 ? 'client_id', 'results carry client_id');
 select pg_temp.check(jsonb_array_length(movement_history(:'org_a')) = 5, 'history lists all movements');
 select pg_temp.check(jsonb_array_length(movement_history(:'org_a', p_code => lower(:'c1'))) = 3, 'history by code');
 select pg_temp.check(jsonb_array_length(movement_history(:'org_a', p_reference => 'van')) = 1, 'history by reference');
-select pg_temp.check(movement_history(:'org_a', p_code => :'c1')->0->>'user_email' = 'a@example.com', 'history shows user');
+select pg_temp.check(movement_history(:'org_a', p_code => :'c1')->0->>'user_label' = 'a@example.com', 'history shows user');
 select movement_history(:'org_a', p_limit => 2) as page1 \gset
 select pg_temp.check(jsonb_array_length(movement_history(:'org_a',
   p_before_at => ((:'page1'::jsonb)->1->>'scanned_at')::timestamptz,
@@ -130,6 +132,60 @@ select sync_events(jsonb_build_array(pg_temp.ev('scan', jsonb_build_object('sess
 select pg_temp.check((:'r'::jsonb)->0->>'result' = 'session_closed', 'late scan to closed session rejected');
 select pg_temp.check(jsonb_array_length(pull_scans(:'sess')) = 4, 'closed-session scan not stored');
 
+
+-- ═══════════ PIN access (single company) ═══════════
+reset role;
+insert into auth.users (id, email, is_anonymous) values
+  ('cccccccc-0000-0000-0000-000000000003', null, true),
+  ('dddddddd-0000-0000-0000-000000000004', null, true);
+set role authenticated;
+select pg_temp.as_user('aaaaaaaa-0000-0000-0000-000000000001') \gset
+select pg_temp.check(pg_temp.fails('select create_org(''nope'')'), 'create_org not callable from the app');
+select pg_temp.check(pg_temp.fails(format('select set_pin(%L, %L)', :'org_a', '123')), 'PIN shorter than 6 digits rejected');
+select pg_temp.check(pg_temp.fails(format('select set_pin(%L, %L)', :'org_a', 'abcdef')), 'non-numeric PIN rejected');
+select pg_temp.check((set_pin(:'org_a', '482915')->>'ok')::boolean, 'owner sets PIN');
+select pg_temp.check((pin_status(:'org_a')->>'has_pin')::boolean, 'pin_status');
+select pg_temp.check(pg_temp.fails('select * from org_pins'), 'PIN hashes not readable');
+select pg_temp.check(pg_temp.fails('select * from pin_attempts'), 'PIN attempts not readable');
+
+-- anonymous device C
+select pg_temp.as_user('cccccccc-0000-0000-0000-000000000003') \gset
+select pg_temp.check(jsonb_array_length(my_orgs()) = 0, 'new device has no company');
+select pg_temp.check(pg_temp.fails(format('select pull_units(%L)', :'org_a')), 'device without PIN cannot read');
+select pg_temp.check(pg_temp.fails('select join_with_pin(''482915'', '''')'), 'name required');
+select pg_temp.check(join_with_pin('000000', 'Joao') is null, 'wrong PIN returns null');
+select pg_temp.check(join_with_pin('482915', 'Joao') = :'org_a'::uuid, 'right PIN joins the company');
+select pg_temp.check(my_orgs()->0->>'display_name' = 'Joao' and my_orgs()->0->>'role' = 'member', 'device is member with its name');
+select pg_temp.check(jsonb_array_length(pull_units(:'org_a')) = 5, 'joined device reads units');
+select sync_events(jsonb_build_array(pg_temp.ev('move', jsonb_build_object('org_id',:'org_a','code',:'c3','direction','in')))) as r \gset
+select pg_temp.check((:'r'::jsonb)->0->>'result' = 'ok', 'joined device syncs moves');
+select pg_temp.check(movement_history(:'org_a', p_code => :'c3')->0->>'user_label' = 'Joao', 'history shows device name');
+select pg_temp.check(pg_temp.fails(format('select set_pin(%L, %L)', :'org_a', '111111')), 'device cannot change PIN');
+select pg_temp.check(pg_temp.fails(format('select list_devices(%L)', :'org_a')), 'device cannot list devices');
+select pg_temp.check(pg_temp.fails(format('select remove_device(%L, %L)', :'org_a', 'aaaaaaaa-0000-0000-0000-000000000001')), 'device cannot remove owner');
+select touch_device(:'org_a');
+
+-- device D: brute force is throttled per device
+select pg_temp.as_user('dddddddd-0000-0000-0000-000000000004') \gset
+select join_with_pin('100000', 'Eve'), join_with_pin('100001', 'Eve'), join_with_pin('100002', 'Eve'),
+       join_with_pin('100003', 'Eve'), join_with_pin('100004', 'Eve');
+select pg_temp.check(pg_temp.fails('select join_with_pin(''482915'', ''Eve'')'), '6th try blocked even with right PIN');
+select pg_temp.check(jsonb_array_length(my_orgs()) = 0, 'throttled device did not join');
+
+-- owner manages devices
+select pg_temp.as_user('aaaaaaaa-0000-0000-0000-000000000001') \gset
+select pg_temp.check(jsonb_array_length(list_devices(:'org_a')) = 2, 'owner lists devices (owner + Joao)');
+select pg_temp.check(pg_temp.fails(format('select remove_device(%L, %L)', :'org_a', 'aaaaaaaa-0000-0000-0000-000000000001')), 'owner cannot remove self');
+select remove_device(:'org_a', 'cccccccc-0000-0000-0000-000000000003');
+select pg_temp.as_user('cccccccc-0000-0000-0000-000000000003') \gset
+select pg_temp.check(pg_temp.fails(format('select pull_units(%L)', :'org_a')), 'removed device loses access');
+select pg_temp.check(join_with_pin('482915', 'Joao') = :'org_a'::uuid, 'removed device can rejoin with PIN');
+select pg_temp.as_user('aaaaaaaa-0000-0000-0000-000000000001') \gset
+select pg_temp.check((set_pin(:'org_a', '736251', true)->>'removed_devices')::int = 1, 'rotate PIN + sign out all devices');
+select pg_temp.check(jsonb_array_length(list_devices(:'org_a')) = 1, 'only the owner remains');
+select pg_temp.as_user('cccccccc-0000-0000-0000-000000000003') \gset
+select pg_temp.check(join_with_pin('482915', 'Joao') is null, 'old PIN no longer works');
+
 -- ═══════════ user B attacks org A ═══════════
 select pg_temp.as_user('bbbbbbbb-0000-0000-0000-000000000002') \gset
 select pg_temp.check((select count(*) from orgs) = 0, 'B sees no orgs');
@@ -149,7 +205,9 @@ select sync_events(jsonb_build_array(
 select pg_temp.check((select bool_and(e->>'result' = 'error') from jsonb_array_elements(:'r'::jsonb) e), 'B sync into A: all rejected');
 
 -- B replays A's client_id against B's own org: must not leak A's data
+reset role;
 select create_org('Org B') as org_b \gset
+set role authenticated;
 select sync_events(jsonb_build_array(jsonb_build_object(
   'kind','move','client_id',:'mv1','org_id',:'org_b','code','X','direction','in'))) as r \gset
 select pg_temp.check((:'r'::jsonb)->0->>'result' = 'error' and not ((:'r'::jsonb)->0 ? 'product'), 'B replaying A client_id leaks nothing');

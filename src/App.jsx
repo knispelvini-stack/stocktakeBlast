@@ -4,7 +4,7 @@ import { loadSettings, saveSettings } from './lib/settings.js'
 import { openLocalDb } from './lib/localdb.js'
 import { createSyncEngine } from './lib/sync.js'
 import Auth from './components/Auth.jsx'
-import CreateOrg from './components/CreateOrg.jsx'
+import AdminScreen from './components/AdminScreen.jsx'
 import MoveScreen from './components/MoveScreen.jsx'
 import CountScreen from './components/CountScreen.jsx'
 import ProductsScreen from './components/ProductsScreen.jsx'
@@ -18,6 +18,7 @@ const TABS = [
   { id: 'history', label: 'History' },
   { id: 'products', label: 'Products & labels' },
   { id: 'settings', label: 'Scanner' },
+  { id: 'admin', label: 'Admin', ownerOnly: true },
 ]
 
 const dbPromise = configured ? openLocalDb() : null
@@ -36,6 +37,7 @@ export default function App() {
   const [tab, setTab] = useState('move')
   const [historyCode, setHistoryCode] = useState('')
   const [settings, setSettings] = useState(loadSettings)
+  const [pinBusy, setPinBusy] = useState(false) // keep the PIN screen mounted while joining
 
   // auth
   useEffect(() => {
@@ -62,9 +64,7 @@ export default function App() {
   }, [])
 
   const userId = session?.user?.id ?? null
-  useEffect(() => {
-    engine?.setUser(userId, session?.user?.email ?? null)
-  }, [engine, userId, session?.user?.email])
+  const isAnon = !!session?.user?.is_anonymous
 
   const loadOrgs = useCallback(async () => {
     if (!engine || !userId) return
@@ -83,12 +83,23 @@ export default function App() {
     loadOrgs()
   }, [loadOrgs])
 
+  const current = orgs?.find(o => o.org_id === orgId)
+  // Name shown in history for this device's own (not yet synced) scans.
+  const userLabel = isAnon ? current?.display_name ?? null : session?.user?.email ?? null
+  useEffect(() => {
+    engine?.setUser(userId, userLabel)
+  }, [engine, userId, userLabel])
+
   // keep the offline cache fresh for the current org
   useEffect(() => {
     if (!engine || !orgId) return
-    engine.refreshOrg(orgId)
-    const t = setInterval(() => engine.refreshOrg(orgId), 5 * 60_000)
-    const onOnline = () => engine.refreshOrg(orgId)
+    const refresh = () => {
+      engine.refreshOrg(orgId)
+      supabase.rpc('touch_device', { p_org: orgId }).then(() => {}) // "last active" in Admin
+    }
+    refresh()
+    const t = setInterval(refresh, 5 * 60_000)
+    const onOnline = refresh
     window.addEventListener('online', onOnline)
     return () => {
       clearInterval(t)
@@ -112,6 +123,7 @@ export default function App() {
       )
     )
       return
+    if (!pending && isAnon && !confirm('Sign out this device? You will need the company PIN to get back in.')) return
     await engine?.clearAll() // shared devices: don't leave company data behind
     await supabase.auth.signOut({ scope: 'local' })
   }
@@ -129,7 +141,10 @@ export default function App() {
     )
   }
   if (session === undefined || !engine) return <div className="center-page muted">Loading…</div>
-  if (!session) return <Auth />
+  // PIN screen: no session yet, an anonymous device that hasn't joined, or mid-join.
+  if (pinBusy || !session || (isAnon && orgs?.length === 0)) {
+    return <Auth key="auth" onBusy={setPinBusy} onJoined={loadOrgs} />
+  }
   if (orgsError) {
     return (
       <div className="center-page">
@@ -147,7 +162,23 @@ export default function App() {
     )
   }
   if (orgs === null) return <div className="center-page muted">Loading…</div>
-  if (!orgId) return <CreateOrg onCreated={loadOrgs} />
+  if (!orgId) {
+    // An email account that isn't part of the company.
+    return (
+      <div className="center-page">
+        <div className="card narrow">
+          <h1>No access</h1>
+          <p className="muted">
+            {session.user.email} is not part of this company. Staff sign in with the company PIN.
+          </p>
+          <button className="primary" onClick={signOut}>
+            Sign out and use the PIN
+          </button>
+        </div>
+      </div>
+    )
+  }
+  const isOwner = current?.role === 'owner' && !isAnon
 
   return (
     <Shell
@@ -158,6 +189,7 @@ export default function App() {
       tab={tab}
       setTab={setTab}
       signOut={signOut}
+      isOwner={isOwner}
     >
       {tab === 'move' && <MoveScreen engine={engine} orgId={orgId} settings={settings} />}
       {tab === 'count' && <CountScreen engine={engine} orgId={orgId} settings={settings} />}
@@ -175,11 +207,12 @@ export default function App() {
         />
       )}
       {tab === 'settings' && <SettingsScreen settings={settings} onChange={updateSettings} />}
+      {tab === 'admin' && isOwner && <AdminScreen orgId={orgId} orgName={current?.name ?? ''} onRenamed={loadOrgs} />}
     </Shell>
   )
 }
 
-function Shell({ engine, orgs, orgId, setOrgId, tab, setTab, signOut, children }) {
+function Shell({ engine, orgs, orgId, setOrgId, tab, setTab, signOut, isOwner, children }) {
   const sync = useSyncExternalStore(engine.subscribe, engine.getState)
   const current = useMemo(() => orgs.find(o => o.org_id === orgId), [orgs, orgId])
   return (
@@ -205,7 +238,7 @@ function Shell({ engine, orgs, orgId, setOrgId, tab, setTab, signOut, children }
         </button>
       </header>
       <nav className="tabs">
-        {TABS.map(t => (
+        {TABS.filter(t => !t.ownerOnly || isOwner).map(t => (
           <button
             key={t.id}
             className={tab === t.id ? 'active' : ''}

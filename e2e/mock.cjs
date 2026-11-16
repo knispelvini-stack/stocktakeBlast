@@ -66,6 +66,17 @@ http
       }
       return
     }
+    // Anonymous sign-in (supabase.auth.signInAnonymously → POST /auth/v1/signup).
+    if (req.url.startsWith('/auth/v1/signup') && req.method === 'POST') {
+      const id = require('crypto').randomUUID()
+      await pool.query('insert into auth.users (id, is_anonymous) values ($1, true)', [id])
+      const exp = Math.floor(Date.now() / 1000) + 3600 * 24 * 365
+      const b64 = o => Buffer.from(JSON.stringify(o)).toString('base64url')
+      const token = `${b64({ alg: 'HS256', typ: 'JWT' })}.${b64({ sub: id, role: 'authenticated', is_anonymous: true, exp })}.sig`
+      const user = { id, aud: 'authenticated', role: 'authenticated', is_anonymous: true, app_metadata: {}, user_metadata: {}, identities: [] }
+      res.setHeader('Content-Type', 'application/json')
+      return res.end(JSON.stringify({ access_token: token, token_type: 'bearer', expires_in: 3600 * 24 * 365, expires_at: exp, refresh_token: 'r-' + id, user }))
+    }
     if (req.url === '/__stats') return res.end(JSON.stringify(stats))
     res.statusCode = 404
     res.setHeader('Content-Type', 'application/json')
