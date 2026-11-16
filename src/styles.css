@@ -47,11 +47,12 @@ code { font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace; font-size:
 
 .topbar {
   display: flex; align-items: center; gap: 16px;
-  padding: 12px 16px; background: var(--ink); color: #fff;
+  padding: 8px 16px; background: var(--ink); color: #fff;
 }
+.topbar button { min-height: 36px; padding-top: 6px; padding-bottom: 6px; }
 .topbar select { width: auto; background: #2a2d35; color: #fff; border-color: #3a3e48; }
 .topbar .ghost { color: #fff; border-color: #3a3e48; margin-left: auto; }
-.brand { font-weight: 800; font-size: 18px; letter-spacing: -0.02em; }
+.brand { font-weight: 700; font-size: 18px; letter-spacing: -0.02em; }
 .brand span { color: var(--accent); }
 .topbar .brand span { color: #7c9cff; }
 .brand.big { font-size: 28px; }
@@ -78,15 +79,15 @@ input[type='checkbox'] { width: 18px; height: 18px; padding: 0; }
 input[type='range'] { padding: 0; }
 input:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 button {
-  font: inherit; font-size: 15px; font-weight: 700; padding: 10px 18px; border-radius: 12px; min-height: var(--control);
-  border: 2px solid transparent; cursor: pointer;
+  font: inherit; font-size: 15px; font-weight: 600; padding: 10px 18px; border-radius: 10px; min-height: var(--control);
+  border: 1px solid transparent; cursor: pointer;
 }
 button:focus-visible, a:focus-visible { outline: 3px solid var(--ink); outline-offset: 2px; }
 .topbar button:focus-visible { outline-color: #fff; }
 button:disabled { opacity: 0.45; cursor: default; }
 .primary { background: var(--accent); color: #fff; }
 .secondary { background: var(--ink); color: #fff; }
-.ghost { background: transparent; border-color: var(--ink); color: var(--ink); }
+.ghost { background: transparent; border-color: rgba(20, 22, 26, 0.3); color: var(--ink); }
 .link { background: none; border: 0; padding: 4px; color: var(--accent); }
 
 .card { background: var(--card); border: 1px solid var(--rule); border-radius: var(--radius); padding: 18px; }
@@ -96,31 +97,25 @@ button:disabled { opacity: 0.45; cursor: default; }
 .notice.ok { background: var(--ok-bg); color: var(--ok); }
 
 /* scanning */
-.segmented { display: flex; border: 2px solid var(--ink); border-radius: 14px; overflow: hidden; background: #fff; }
-.segmented button { border-radius: 0; background: none; padding: 14px 22px; font-size: 16px; color: var(--mute); }
+.segmented { display: flex; border: 1px solid rgba(20, 22, 26, 0.3); border-radius: 12px; overflow: hidden; background: #fff; }
+.segmented button { border-radius: 0; background: none; padding: 12px 18px; font-size: 15px; font-weight: 600; white-space: nowrap; flex: 1; color: var(--mute); }
 .segmented button.active.out { background: var(--warn-solid); color: var(--ink); }
 .segmented button.active.in { background: var(--ok-solid); color: #fff; }
 
 .flash {
-  position: relative; overflow: hidden; border-radius: 22px; padding: 26px 22px; text-align: center;
-  border: 2px solid transparent; animation: pop 0.18s ease-out;
-  display: flex; flex-direction: column; align-items: center; gap: 6px; min-height: 168px; justify-content: center;
+  position: relative; overflow: hidden; border-radius: 16px; padding: 22px 18px; text-align: center;
+  border: 1px solid transparent; animation: pop 0.18s ease-out;
+  display: flex; flex-direction: column; align-items: center; gap: 6px; min-height: 140px; justify-content: center;
 }
-.flash-label { display: flex; align-items: center; gap: 10px; font-size: 12px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
-.flash-label svg { width: 30px; height: 30px; }
-.flash.idle { background: #fff; border: 2px dashed #9a958a; animation: none; }
-.flash.idle::after {
-  content: ''; position: absolute; left: 20px; right: 20px; height: 3px; border-radius: 2px;
-  background: var(--accent); top: 14%; animation: beam 2.2s ease-in-out infinite alternate;
-}
+.flash-label { display: flex; align-items: center; gap: 8px; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; opacity: 0.9; text-transform: uppercase; }
+.flash-label svg { width: 20px; height: 20px; }
+.flash.idle { background: #fff; border: 1px dashed #9a958a; animation: none; }
 .flash.ok { background: var(--ok-solid); border-color: var(--ok-solid); color: #fff; }
 .flash.warn { background: var(--warn-solid); border-color: var(--warn-solid); color: var(--ink); }
 .flash.error { background: var(--error-solid); border-color: var(--error-solid); color: #fff; }
-.flash-title { font-size: clamp(24px, 5vw, 40px); font-weight: 800; letter-spacing: -0.02em; line-height: 1.1; }
-.flash-sub { margin-top: 2px; font-size: 16px; color: inherit; }
+.flash-title { font-size: clamp(22px, 4.5vw, 32px); font-weight: 700; letter-spacing: -0.015em; line-height: 1.15; }
+.flash-sub { margin-top: 2px; font-size: 15px; color: inherit; }
 .flash.idle .flash-sub { color: var(--mute); }
-@keyframes beam { from { top: 14%; } to { top: 86%; } }
-.flash > * { position: relative; z-index: 1; } /* text above the scan beam */
 @keyframes pop { from { transform: scale(0.97); } to { transform: scale(1); } }
 
 .scan-input { display: flex; gap: 8px; }
@@ -143,7 +138,7 @@ button:disabled { opacity: 0.45; cursor: default; }
 /* stocktake */
 .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
 .kpi { background: #fff; border: 1px solid var(--rule); border-radius: var(--radius); padding: 14px; }
-.kpi-value { font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace; font-size: 32px; font-weight: 700; line-height: 1.1; }
+.kpi-value { font-family: 'JetBrains Mono', ui-monospace, Menlo, monospace; font-size: 28px; font-weight: 600; line-height: 1.1; }
 .kpi-value small { font-size: 14px; color: var(--mute); font-weight: 600; }
 .kpi-label { font-size: 12px; color: var(--mute); text-transform: uppercase; letter-spacing: 0.04em; }
 .kpi.error .kpi-value { color: var(--error); }
@@ -207,9 +202,6 @@ button:disabled { opacity: 0.45; cursor: default; }
   .show-sm { display: inline-block; margin-left: 6px; }
 }
 /* very narrow phones: 6 tabs must not run into each other */
-@media (max-width: 360px) {
-  .app .tabs button { font-size: 10.5px; letter-spacing: -0.01em; padding-left: 1px; padding-right: 1px; }
-}
 .print-area { overflow-x: auto; }
 
 @media (max-width: 640px) {
@@ -282,7 +274,11 @@ button:disabled { opacity: 0.45; cursor: default; }
 .small-btn { padding: 4px 10px; font-size: 13px; }
 @media (max-width: 640px) {
   .sync-main { font-size: 12px; padding: 6px 8px; }
-  .topbar { flex-wrap: wrap; }
+  .topbar { flex-wrap: nowrap; gap: 8px; padding: 8px 12px; }
+  .topbar .brand { font-size: 16px; flex: none; }
+  .topbar .org { flex: 1 1 0; min-width: 0; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .topbar select { flex: 1 1 0; min-width: 0; }
+  .topbar .ghost { padding: 6px 10px; font-size: 14px; flex: none; margin-left: auto; }
 }
 
 /* PIN */
@@ -290,21 +286,26 @@ button:disabled { opacity: 0.45; cursor: default; }
 
 /* phone: bottom navigation, thumb reach */
 @media (max-width: 640px) {
-  .app { padding-bottom: 68px; }
+  .app { padding-bottom: 64px; }
   .content { padding-bottom: 24px; }
   .tabs {
     position: fixed; left: 0; right: 0; bottom: 0; z-index: 5; display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); /* 5 tabs for staff, 6 for the owner */
     padding: 0; background: var(--ink); border-bottom: 0; border-top: 0; overflow: visible;
   }
   .tabs button {
-    white-space: normal; font-size: 12px; line-height: 1.2; padding: 8px 2px; min-height: 60px; color: #c9cbd1;
+    white-space: normal; font-size: clamp(10px, 2.9vw, 12px); font-weight: 600; line-height: 1.2; padding: 8px 4px; min-height: 56px; color: #c9cbd1; min-width: 0; overflow: hidden;
     border: 0; border-top: 3px solid transparent; border-radius: 0;
   }
-  .tabs button.active { color: #fff; border-top-color: #7c9cff; font-weight: 800; }
+  .tabs button.active { color: #fff; border-top-color: #7c9cff; }
   .tabs button:focus-visible { outline-color: #fff; outline-offset: -4px; }
   .flash { min-height: 150px; }
   /* feed: detail on its own line instead of squeezed columns */
   .feed li { flex-wrap: wrap; row-gap: 2px; }
   .feed li > .muted:not(.time) { order: 5; flex-basis: 100%; padding-left: 36px; font-size: 13px; }
+}
+/* very narrow phones (320px): drop the company name from the top bar, tighten tabs */
+@media (max-width: 360px) {
+  .topbar .org { display: none; }
+  .app .tabs button { font-size: 10px; padding-left: 1px; padding-right: 1px; letter-spacing: -0.01em; }
 }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
