@@ -155,6 +155,8 @@ select sync_events(jsonb_build_array(jsonb_build_object(
 select pg_temp.check((:'r'::jsonb)->0->>'result' = 'error' and not ((:'r'::jsonb)->0 ? 'product'), 'B replaying A client_id leaks nothing');
 select pg_temp.check(pg_temp.fails(format('insert into products (org_id,name) values (%L, %L)', :'org_a', 'evil')), 'B cannot insert into A');
 select pg_temp.check(pg_temp.fails(format('insert into movements (org_id, unit_id, direction) values (%L, gen_random_uuid(), %L)', :'org_b', 'in')), 'no direct movement inserts');
+select pg_temp.check(pg_temp.fails(format('select _sync_move(%L::jsonb)', jsonb_build_object('client_id', gen_random_uuid(), 'org_id', :'org_b', 'code', 'X', 'direction', 'in'))), 'internal _sync_move not callable');
+select pg_temp.check(pg_temp.fails('select gen_unit_code()'), 'internal gen_unit_code not callable');
 
 -- ═══════════ A state untouched ═══════════
 select pg_temp.as_user('aaaaaaaa-0000-0000-0000-000000000001') \gset
@@ -165,5 +167,6 @@ reset role;
 set role anon;
 select pg_temp.check(pg_temp.fails('select sync_events(''[]''::jsonb)'), 'anon cannot sync');
 select pg_temp.check(pg_temp.fails('select my_orgs()'), 'anon cannot my_orgs');
+select pg_temp.check(pg_temp.fails('select 1 from units limit 1'), 'anon has no table access');
 reset role;
 \echo ALL CHECKS PASSED

@@ -18,6 +18,10 @@ Stack: React 19 + Vite, Supabase (Postgres, Auth, RLS). No router.
 
 ## Setup
 
+Production (Supabase + Vercel): see [DEPLOY.md](DEPLOY.md).
+
+Local:
+
 1. Create a Supabase project.
 2. Run the files in `supabase/migrations/` **in order** (SQL editor, or `supabase db push`).
 3. Auth → Providers: keep **Email** enabled. For local testing you can turn off "Confirm email".
