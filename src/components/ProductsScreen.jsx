@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase.js'
 import Labels from './Labels.jsx'
+import LabelStudio from './LabelStudio.jsx'
+import NewProductModal from './NewProductModal.jsx'
 import Icon from './ui/Icon.jsx'
 import { PageHeader, Section, EmptyState, Modal, StatusBadge, Stat, useUI, timeAgo } from './ui/ui.jsx'
 
@@ -10,13 +12,12 @@ export default function ProductsScreen({ engine, orgId, onShowHistory }) {
   const [offline, setOffline] = useState(false)
   const [selected, setSelected] = useState(null)
   const [creating, setCreating] = useState(false)
-  const [form, setForm] = useState({ name: '', sku: '' })
-  const [saving, setSaving] = useState(false)
+  const [studio, setStudio] = useState(false)
   const [query, setQuery] = useState('')
 
   const load = useCallback(async () => {
     const [{ data: prods, error }, { data: stock }] = await Promise.all([
-      supabase.from('products').select('id, name, sku').eq('org_id', orgId).order('name'),
+      supabase.from('products').select('id, name, sku, category, code_stem, code_digits, theme_id, size').eq('org_id', orgId).order('name'),
       supabase.from('product_stock').select('*').eq('org_id', orgId),
     ])
     if (error) {
@@ -32,22 +33,19 @@ export default function ProductsScreen({ engine, orgId, onShowHistory }) {
     load()
   }, [load])
 
-  async function add(e) {
-    e.preventDefault()
-    setSaving(true)
-    const { data, error } = await supabase
-      .from('products')
-      .insert({ org_id: orgId, name: form.name.trim(), sku: form.sku.trim() || null })
-      .select('id')
-      .single()
-    setSaving(false)
-    if (error) return ui.toast(error.code === '23505' ? 'That SKU already exists.' : error.message, 'error')
-    setForm({ name: '', sku: '' })
-    setCreating(false)
-    ui.toast(`“${form.name.trim()}” added. Now generate its labels.`, 'ok')
-    await load()
-    if (data?.id) setSelected(data.id)
-  }
+  if (studio)
+    return (
+      <LabelStudio
+        engine={engine}
+        orgId={orgId}
+        products={products}
+        onBack={() => {
+          setStudio(false)
+          load()
+        }}
+        onCreated={load}
+      />
+    )
 
   const product = products?.find(p => p.id === selected)
   if (product)
@@ -88,7 +86,14 @@ export default function ProductsScreen({ engine, orgId, onShowHistory }) {
       <PageHeader
         title="Inventory"
         description="Your products and every labelled unit. Open a product to generate and print labels."
-        actions={newButton}
+        actions={
+          <>
+            <button className="secondary" onClick={() => setStudio(true)} data-testid="open-labels">
+              <Icon name="printer" /> Labels
+            </button>
+            {newButton}
+          </>
+        }
       />
 
       {offline ? (
@@ -158,7 +163,11 @@ export default function ProductsScreen({ engine, orgId, onShowHistory }) {
                         <tr key={p.id} className="clickable" onClick={() => setSelected(p.id)}>
                           <td className="primary-cell">
                             {p.name}
-                            {p.sku && <div className="muted small mono">{p.sku}</div>}
+                            {(p.code_stem || p.sku) && (
+                              <div className="muted small mono">
+                                {p.code_stem ? `${p.code_stem}-${'0'.repeat(p.code_digits - 1)}1` : p.category === 'BLO' ? 'codes by hand' : p.sku}
+                              </div>
+                            )}
                           </td>
                           <td className="hide-sm">
                             <div className="stock-bar" title={`${p.stock.in_stock} in · ${p.stock.out} out · ${p.stock.lost} lost`}>
@@ -186,32 +195,15 @@ export default function ProductsScreen({ engine, orgId, onShowHistory }) {
       )}
 
       {creating && (
-        <form onSubmit={add}>
-          <Modal
-            title="New product"
-            description="A type of item. You’ll generate one label per physical unit next."
-            onClose={() => setCreating(false)}
-            footer={
-              <>
-                <button type="button" className="secondary" onClick={() => setCreating(false)}>
-                  Cancel
-                </button>
-                <button className="primary" disabled={saving || !form.name.trim()}>
-                  {saving ? 'Saving…' : 'Create product'}
-                </button>
-              </>
-            }
-          >
-            <label>
-              Product name
-              <input required value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} placeholder="e.g. Castle 4×4" />
-            </label>
-            <label>
-              SKU <span className="hint">optional — your own reference code</span>
-              <input value={form.sku} onChange={e => setForm({ ...form, sku: e.target.value })} placeholder="e.g. CST-44" />
-            </label>
-          </Modal>
-        </form>
+        <NewProductModal
+          orgId={orgId}
+          onClose={() => setCreating(false)}
+          onCreated={async id => {
+            setCreating(false)
+            await load()
+            setSelected(id)
+          }}
+        />
       )}
     </>
   )
@@ -226,6 +218,34 @@ function ProductDetail({ engine, orgId, product, onBack, onShowHistory }) {
   const [checked, setChecked] = useState(new Set())
   const [printing, setPrinting] = useState(null)
   const [showRetired, setShowRetired] = useState(false)
+  const [adding, setAdding] = useState(false)
+  const [manualCode, setManualCode] = useState('')
+  const [nextCodes, setNextCodes] = useState([])
+  const manual = product.category === 'BLO'
+  const scheme = product.code_stem
+    ? `${product.code_stem}-${'0'.repeat(product.code_digits - 1)}1, ${product.code_stem}-${'0'.repeat(product.code_digits - 1)}2 …`
+    : manual
+      ? 'codes entered by hand (e.g. BLO-C3)'
+      : 'random 8-character codes'
+
+  useEffect(() => {
+    if (!generating || !product.code_stem) return
+    supabase
+      .rpc('next_codes', { p_product: product.id, p_count: Math.min(Number(count) || 1, 3) })
+      .then(({ data }) => setNextCodes(data ?? []))
+  }, [generating, count, product.id, product.code_stem])
+
+  async function addManual(e) {
+    e.preventDefault()
+    const { data, error } = await supabase.rpc('add_unit_with_code', { p_product: product.id, p_code: manualCode })
+    if (error) return ui.toast(error.message, 'error')
+    ui.toast(`${data.code} added.`, 'ok')
+    setManualCode('')
+    setAdding(false)
+    await load()
+    setChecked(prev => new Set([...prev, data.id]))
+    engine.pullUnits(orgId).catch(() => {})
+  }
 
   const load = useCallback(async () => {
     const { data, error } = await supabase
@@ -294,15 +314,25 @@ function ProductDetail({ engine, orgId, product, onBack, onShowHistory }) {
       <PageHeader
         back={{ label: 'Inventory', onClick: onBack }}
         title={product.name}
-        description={product.sku ? <span className="mono">{product.sku}</span> : 'One row per physical unit and its label.'}
+        description={
+          <>
+            Codes: <span className="mono">{scheme}</span>
+            {product.sku && <span className="muted"> · SKU {product.sku}</span>}
+          </>
+        }
         actions={
           <>
             <button className="secondary" disabled={!visible.length} onClick={() => setPrinting(toPrint.length ? toPrint : visible)}>
               <Icon name="printer" /> {toPrint.length ? `Print ${toPrint.length} selected` : `Print all (${visible.length})`}
             </button>
-            <button className="primary" onClick={() => setGenerating(true)}>
-              <Icon name="plus" /> Generate labels
+            <button className={manual ? 'primary' : 'secondary'} onClick={() => setAdding(true)}>
+              <Icon name="keyboard" /> Add piece with code
             </button>
+            {!manual && (
+              <button className="primary" onClick={() => (manual ? setAdding(true) : setGenerating(true))}>
+                <Icon name="plus" /> {manual ? 'Add piece with code' : 'Generate labels'}
+              </button>
+            )}
           </>
         }
       />
@@ -334,12 +364,14 @@ function ProductDetail({ engine, orgId, product, onBack, onShowHistory }) {
             icon="barcode"
             title="No units yet"
             action={
-              <button className="primary" onClick={() => setGenerating(true)}>
-                <Icon name="plus" /> Generate labels
+              <button className="primary" onClick={() => (manual ? setAdding(true) : setGenerating(true))}>
+                <Icon name={manual ? 'keyboard' : 'plus'} /> {manual ? 'Add piece with code' : 'Generate labels'}
               </button>
             }
           >
-            Generate one label per physical item, print them and stick them on.
+            {manual
+              ? 'Add each piece with its exact code, then print the labels.'
+              : 'Generate one label per physical item, print them and stick them on.'}
           </EmptyState>
         ) : (
           <div className="table-wrap">
@@ -414,7 +446,44 @@ function ProductDetail({ engine, orgId, product, onBack, onShowHistory }) {
             <label>
               How many physical units?
               <input type="number" min={1} max={500} value={count} onChange={e => setCount(e.target.value)} />
-              <span className="hint">Up to 500 at a time. Codes avoid 0/O and 1/I so they can’t be misread.</span>
+              <span className="hint">
+                {product.code_stem
+                  ? nextCodes.length
+                    ? `Next codes: ${nextCodes.join(', ')}${Number(count) > nextCodes.length ? ' …' : ''}`
+                    : 'No piece numbers left for this pattern.'
+                  : 'Up to 500 at a time. Random codes avoid 0/O and 1/I.'}
+              </span>
+            </label>
+          </Modal>
+        </form>
+      )}
+      {adding && (
+        <form onSubmit={addManual}>
+          <Modal
+            title="Add piece with code"
+            description="For a piece that already has a code (e.g. BLO-C3). Scan its label or type the code."
+            onClose={() => setAdding(false)}
+            footer={
+              <>
+                <button type="button" className="secondary" onClick={() => setAdding(false)}>
+                  Cancel
+                </button>
+                <button className="primary" disabled={!manualCode.trim()}>
+                  Add piece
+                </button>
+              </>
+            }
+          >
+            <label>
+              Code
+              <input
+                className="mono"
+                value={manualCode}
+                placeholder="e.g. BLO-C3"
+                onChange={e => setManualCode(e.target.value.toUpperCase())}
+                data-testid="manual-code"
+              />
+              <span className="hint">A–Z, 0–9 and hyphens. Must not be used by any other piece.</span>
             </label>
           </Modal>
         </form>

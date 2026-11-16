@@ -192,6 +192,48 @@ select pg_temp.check(jsonb_array_length(list_devices(:'org_a')) = 1, 'only the o
 select pg_temp.as_user('cccccccc-0000-0000-0000-000000000003') \gset
 select pg_temp.check(join_with_pin('482915', 'Joao') is null, 'old PIN no longer works');
 
+
+-- ═══════════ item codes (BAN-<PREFIX><size>-NN) ═══════════
+select pg_temp.as_user('aaaaaaaa-0000-0000-0000-000000000001') \gset
+insert into themes (org_id, name, prefix) values (:'org_a', 'Paw Patrol', 'PAW') returning id as paw \gset
+select pg_temp.check(pg_temp.fails(format('insert into themes (org_id, name, prefix) values (%L, %L, %L)', :'org_a', 'Pawsome', 'PAW')), 'theme prefix unique');
+select pg_temp.check(pg_temp.fails(format('insert into themes (org_id, name, prefix) values (%L, %L, %L)', :'org_a', 'paw patrol', 'PPT')), 'theme name unique (one prefix per theme)');
+select pg_temp.check(pg_temp.fails(format('insert into themes (org_id, name, prefix) values (%L, %L, %L)', :'org_a', 'Bad', 'p1')), 'prefix must be upper-case');
+insert into products (org_id, name, category, theme_id, size, code_stem) values (:'org_a', 'Paw Patrol banner 4x5', 'BAN', :'paw', '4x5', 'WHATEVER') returning id as ban45, code_stem as stem45 \gset
+select pg_temp.check(:'stem45' = 'BAN-PAW45', 'banner stem computed by the database (typed stem ignored)');
+insert into products (org_id, name, category, theme_id, size) values (:'org_a', 'Paw Patrol banner 3x4', 'BAN', :'paw', '3 x 4') returning code_stem as stem34 \gset
+select pg_temp.check(:'stem34' = 'BAN-PAW34', 'same theme, other size, same prefix');
+select pg_temp.check(pg_temp.fails(format('insert into products (org_id, name, category, theme_id, size) values (%L, %L, %L, %L, %L)', :'org_a', 'dup', 'BAN', :'paw', '4x5')), 'same banner twice rejected');
+select pg_temp.check(pg_temp.fails(format('insert into products (org_id, name, category) values (%L, %L, %L)', :'org_a', 'no theme', 'BAN')), 'banner needs theme and size');
+select pg_temp.check(next_codes(:'ban45', 2) = '["BAN-PAW45-01", "BAN-PAW45-02"]'::jsonb, 'next_codes preview');
+select string_agg(code, ',' order by code) as codes from generate_units(:'ban45', 3) \gset
+select pg_temp.check(:'codes' = 'BAN-PAW45-01,BAN-PAW45-02,BAN-PAW45-03', 'generate BAN-PAW45-01..03');
+update units set status = 'retired' where code = 'BAN-PAW45-03';
+select code as c_next from generate_units(:'ban45', 1) \gset
+select pg_temp.check(:'c_next' = 'BAN-PAW45-04', 'retired numbers are never reused');
+delete from units where code = 'BAN-PAW45-03'; -- RLS: no delete policy, so 0 rows
+select pg_temp.check((select count(*) from units where code = 'BAN-PAW45-03') = 1, 'retired unit row is kept');
+delete from products where id = :'ban45';
+select pg_temp.check((select count(*) from products where id = :'ban45') = 1, 'products cannot be deleted');
+select pg_temp.check(pg_temp.fails(format('update products set size = %L where id = %L', '5x6', :'ban45')), 'scheme frozen once labels exist');
+-- castles: shared stem across products, 3 digits
+insert into products (org_id, name, category, code_stem, code_digits) values (:'org_a', 'Castle Blue', 'CAS', 'cas', 3) returning id as cas1 \gset
+insert into products (org_id, name, category, code_stem, code_digits) values (:'org_a', 'Castle Pink', 'CAS', 'CAS', 3) returning id as cas2 \gset
+select code as k1 from generate_units(:'cas1', 1) \gset
+select code as k2 from generate_units(:'cas2', 1) \gset
+select pg_temp.check(:'k1' = 'CAS-001' and :'k2' = 'CAS-002', 'one sequence per stem across products (CAS-001, CAS-002)');
+-- exhaustion
+insert into products (org_id, name, code_stem, code_digits) values (:'org_a', 'Tiny', 'TNY', 1) returning id as tny \gset
+select count(*) from generate_units(:'tny', 9);
+select pg_temp.check(pg_temp.fails(format('select generate_units(%L, 1)', :'tny')), 'stops when piece numbers run out');
+-- manual codes (blowers)
+insert into products (org_id, name, category) values (:'org_a', 'Blower', 'BLO') returning id as blo \gset
+select pg_temp.check((add_unit_with_code(:'blo', ' blo-c3 ')).code = 'BLO-C3', 'manual code normalised');
+select pg_temp.check(pg_temp.fails(format('select add_unit_with_code(%L, %L)', :'blo', 'BLO-C3')), 'duplicate manual code rejected');
+select pg_temp.check(pg_temp.fails(format('select add_unit_with_code(%L, %L)', :'blo', 'bad code!')), 'invalid manual code rejected');
+-- legacy random still works
+select pg_temp.check(length((select code from generate_units(:'prod_a', 1))) = 8, 'products without a stem keep random codes');
+
 -- ═══════════ user B attacks org A ═══════════
 select pg_temp.as_user('bbbbbbbb-0000-0000-0000-000000000002') \gset
 select pg_temp.check((select count(*) from orgs) = 0, 'B sees no orgs');
@@ -218,6 +260,10 @@ select sync_events(jsonb_build_array(jsonb_build_object(
   'kind','move','client_id',:'mv1','org_id',:'org_b','code','X','direction','in'))) as r \gset
 select pg_temp.check((:'r'::jsonb)->0->>'result' = 'error' and not ((:'r'::jsonb)->0 ? 'product'), 'B replaying A client_id leaks nothing');
 select pg_temp.check(pg_temp.fails(format('insert into products (org_id,name) values (%L, %L)', :'org_a', 'evil')), 'B cannot insert into A');
+select pg_temp.check(pg_temp.fails(format('insert into products (org_id, name, category, theme_id, size) values (%L, %L, %L, %L, %L)', :'org_b', 'steal', 'BAN', :'paw', '9x9')), 'B cannot use A theme');
+select pg_temp.check((select count(*) from themes) = 0, 'B sees no themes of A');
+select pg_temp.check(pg_temp.fails(format('select add_unit_with_code(%L, %L)', :'ban45', 'EVIL-1')), 'B cannot add units to A');
+select pg_temp.check(pg_temp.fails(format('select next_codes(%L)', :'ban45')), 'B cannot preview A codes');
 select pg_temp.check(pg_temp.fails(format('insert into movements (org_id, unit_id, direction) values (%L, gen_random_uuid(), %L)', :'org_b', 'in')), 'no direct movement inserts');
 select pg_temp.check(pg_temp.fails(format('select _sync_move(%L::jsonb)', jsonb_build_object('client_id', gen_random_uuid(), 'org_id', :'org_b', 'code', 'X', 'direction', 'in'))), 'internal _sync_move not callable');
 select pg_temp.check(pg_temp.fails('select gen_unit_code()'), 'internal gen_unit_code not callable');

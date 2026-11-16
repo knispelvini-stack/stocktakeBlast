@@ -132,7 +132,7 @@ export function UIProvider({ children }) {
 
   const toast = useCallback((message, tone = 'neutral') => {
     const id = ++toastSeq
-    setToasts(t => [...t, { id, message, tone }])
+    setToasts(t => [...t, { id, message, tone }].slice(-3)) // newest 3; older ones would cover the screen
     setTimeout(() => setToasts(t => t.filter(x => x.id !== id)), tone === 'error' ? 7000 : 4000)
   }, [])
 

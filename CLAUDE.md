@@ -30,4 +30,7 @@ read by keyboard-wedge (HID) USB/Bluetooth scanners. See README.md for the full 
   Badge, Icon) and `useUI()` for `toast()` / `confirm()`. Never `window.alert` / `window.confirm`.
 - Every screen must pass the responsive audit (320–1440px, no page-level horizontal scroll,
   ≥40px tap targets on touch layouts).
+- Item codes: `BAN-<PREFIX><size>-NN` (banner stems computed by the `products_code_scheme`
+  trigger), `CAS-NNN`, blowers by hand. Numbering is per stem via `generate_units()`; never reuse
+  numbers, never delete units/products (retire instead). See README "Item codes and labels".
 - After clicking buttons on scan screens, blur them, so a scanner's Enter can't re-trigger them.
