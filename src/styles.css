@@ -120,6 +120,7 @@ button:disabled { opacity: 0.45; cursor: default; }
 .flash-sub { margin-top: 2px; font-size: 16px; color: inherit; }
 .flash.idle .flash-sub { color: var(--mute); }
 @keyframes beam { from { top: 14%; } to { top: 86%; } }
+.flash > * { position: relative; z-index: 1; } /* text above the scan beam */
 @keyframes pop { from { transform: scale(0.97); } to { transform: scale(1); } }
 
 .scan-input { display: flex; gap: 8px; }
@@ -264,5 +265,8 @@ button:disabled { opacity: 0.45; cursor: default; }
   .tabs button.active { color: #fff; border-top-color: #7c9cff; font-weight: 800; }
   .tabs button:focus-visible { outline-color: #fff; outline-offset: -4px; }
   .flash { min-height: 150px; }
+  /* feed: detail on its own line instead of squeezed columns */
+  .feed li { flex-wrap: wrap; row-gap: 2px; }
+  .feed li > .muted:not(.time) { order: 5; flex-basis: 100%; padding-left: 36px; font-size: 13px; }
 }
 @media (prefers-reduced-motion: reduce) { * { animation: none !important; transition: none !important; } }
