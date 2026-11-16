@@ -4,5 +4,5 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 psql "$PGURL" -v ON_ERROR_STOP=1 -q -f auth_shim.sql
-psql "$PGURL" -v ON_ERROR_STOP=1 -q -f ../migrations/20261116000000_init.sql
+for f in ../migrations/*.sql; do psql "$PGURL" -v ON_ERROR_STOP=1 -q -f "$f"; done
 psql "$PGURL" -q -f smoke.sql

@@ -8,3 +8,10 @@ createRoot(document.getElementById('root')).render(
     <App />
   </StrictMode>,
 )
+
+// Offline support: cache the app shell, and ask the browser not to evict our
+// IndexedDB (unsynced scans live there) when the disk gets full.
+if ('serviceWorker' in navigator && import.meta.env.PROD) {
+  window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js'))
+}
+navigator.storage?.persist?.().catch(() => {})
