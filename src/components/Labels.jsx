@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import JsBarcode from 'jsbarcode'
+import Icon from './ui/Icon.jsx'
+import { PageHeader } from './ui/ui.jsx'
 
 // Printable barcode labels (Code 128).
 const LAYOUTS = {
@@ -29,21 +31,29 @@ export default function Labels({ units, onClose }) {
   return (
     <div className="labels-screen">
       <style>{`@media print { @page { size: ${L.page}; margin: ${layout === 'a4' ? '12.9mm 7.25mm 0' : '0'}; } }`}</style>
-      <div className="row wrap no-print">
-        <button className="ghost" onClick={onClose}>
-          ← Back
-        </button>
-        <select value={layout} onChange={e => setLayout(e.target.value)}>
-          {Object.entries(LAYOUTS).map(([k, v]) => (
-            <option key={k} value={k}>
-              {v.name}
-            </option>
-          ))}
-        </select>
-        <button className="primary" onClick={() => window.print()}>
-          Print {units.length} label{units.length === 1 ? '' : 's'}
-        </button>
-        <span className="muted small">Print at 100% scale (no “fit to page”) so scanners read the bars reliably.</span>
+      <div className="no-print">
+        <PageHeader
+          back={{ label: 'Back to units', onClick: onClose }}
+          title="Print labels"
+          description={`${units.length} label${units.length === 1 ? '' : 's'} · print at 100% scale (no “fit to page”) so scanners read the bars reliably.`}
+          actions={
+            <button className="primary" onClick={() => window.print()}>
+              <Icon name="printer" /> Print {units.length} label{units.length === 1 ? '' : 's'}
+            </button>
+          }
+        />
+        <div style={{ marginTop: 16, maxWidth: 460 }}>
+          <label>
+            Label stock
+            <select value={layout} onChange={e => setLayout(e.target.value)}>
+              {Object.entries(LAYOUTS).map(([k, v]) => (
+                <option key={k} value={k}>
+                  {v.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
       </div>
       <div className={`print-area ${L.cls}`}>
         {units.map(u => (

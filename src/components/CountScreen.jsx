@@ -3,24 +3,27 @@ import { supabase } from '../lib/supabase.js'
 import { useScanner } from '../lib/useScanner.js'
 import { beep } from '../lib/beep.js'
 import { ScanInput, ScanFlash, ScanFeed, makeEntry } from './ScanParts.jsx'
+import Icon from './ui/Icon.jsx'
+import { PageHeader, Section, Stat, EmptyState, Badge, StatusBadge, Modal, useUI, formatDateTime } from './ui/ui.jsx'
 
 export default function CountScreen({ engine, orgId, settings }) {
   const sync = useSyncExternalStore(engine.subscribe, engine.getState)
   const [sessions, setSessions] = useState(null)
   const [activeId, setActiveId] = useState(null)
   const [name, setName] = useState('')
+  const [creating, setCreating] = useState(false)
 
   useEffect(() => {
     engine.listSessions(orgId).then(setSessions)
   }, [engine, orgId, sync.version])
 
+  const defaultName = `Stocktake ${new Date().toLocaleDateString()}`
+
   async function create(e) {
     e.preventDefault()
-    const id = await engine.createSession({
-      orgId,
-      name: name.trim() || `Stocktake ${new Date().toLocaleDateString()}`,
-    })
+    const id = await engine.createSession({ orgId, name: name.trim() || defaultName })
     setName('')
+    setCreating(false)
     setActiveId(id)
   }
 
@@ -29,42 +32,86 @@ export default function CountScreen({ engine, orgId, settings }) {
     return <CountSession engine={engine} orgId={orgId} session={active} settings={settings} onBack={() => setActiveId(null)} />
   }
 
-  return (
-    <div className="stack">
-      <form className="card row wrap" onSubmit={create}>
-        <label className="grow">
-          New stocktake
-          <input
-            placeholder={`Stocktake ${new Date().toLocaleDateString()}`}
-            value={name}
-            onChange={e => setName(e.target.value)}
-          />
-        </label>
-        <button className="primary">Start counting</button>
-      </form>
-      {!sync.online && <p className="muted small">Offline: you can start and count a stocktake now; it syncs later.</p>}
+  const newButton = (
+    <button className="primary" onClick={() => setCreating(true)}>
+      <Icon name="plus" /> New stocktake
+    </button>
+  )
 
-      {sessions === null ? (
-        <p className="muted">Loading…</p>
-      ) : sessions.length === 0 ? (
-        <p className="muted">No stocktakes yet. Start one above, then scan every label you can find.</p>
-      ) : (
-        <ul className="list">
-          {sessions.map(s => (
-            <li key={s.id} onClick={() => setActiveId(s.id)} className="clickable">
-              <strong>{s.name}</strong>
-              <span className={`pill ${s.status}`}>{s.status}</span>
-              {s.pending && <span className="pill pending">not synced</span>}
-              <span className="muted small">{new Date(s.created_at).toLocaleString()}</span>
-            </li>
-          ))}
-        </ul>
+  return (
+    <>
+      <PageHeader
+        title="Stocktake"
+        description="Count every unit on the shelves and compare with what the system expects."
+        actions={newButton}
+      />
+      {!sync.online && (
+        <div className="notice offline">
+          <Icon name="wifiOff" />
+          <div>Offline: you can start and count a stocktake now; it syncs when the connection is back.</div>
+        </div>
       )}
-    </div>
+
+      <Section flush title="All stocktakes">
+        {sessions === null ? (
+          <p className="muted" style={{ padding: 20 }}>
+            Loading…
+          </p>
+        ) : sessions.length === 0 ? (
+          <EmptyState icon="clipboard" title="No stocktakes yet" action={newButton}>
+            Start one, then walk the warehouse scanning every label you can find. Several devices can count the same
+            stocktake at once.
+          </EmptyState>
+        ) : (
+          <ul className="list">
+            {sessions.map(s => (
+              <li key={s.id} onClick={() => setActiveId(s.id)} className="clickable">
+                <div className="li-main">
+                  <span className="li-title">{s.name}</span>
+                  <span className="li-sub">
+                    Started {formatDateTime(s.created_at)}
+                    {s.closed_at ? ` · finished ${formatDateTime(s.closed_at)}` : ''}
+                  </span>
+                </div>
+                <div className="li-end">
+                  {s.pending && <Badge tone="warn">Not synced</Badge>}
+                  <StatusBadge status={s.status} />
+                  <Icon name="chevronRight" size={16} />
+                </div>
+              </li>
+            ))}
+          </ul>
+        )}
+      </Section>
+
+      {creating && (
+        <form onSubmit={create}>
+          <Modal
+            title="New stocktake"
+            description="Give it a name so you can find it later."
+            onClose={() => setCreating(false)}
+            footer={
+              <>
+                <button type="button" className="secondary" onClick={() => setCreating(false)}>
+                  Cancel
+                </button>
+                <button className="primary">Start counting</button>
+              </>
+            }
+          >
+            <label>
+              Name
+              <input placeholder={defaultName} value={name} onChange={e => setName(e.target.value)} />
+            </label>
+          </Modal>
+        </form>
+      )}
+    </>
   )
 }
 
 function CountSession({ engine, orgId, session, settings, onBack }) {
+  const ui = useUI()
   const sync = useSyncExternalStore(engine.subscribe, engine.getState)
   const [summary, setSummary] = useState(null)
   const [pendingHere, setPendingHere] = useState(0)
@@ -100,7 +147,7 @@ function CountSession({ engine, orgId, session, settings, onBack }) {
         setFeed(f =>
           f.map(e => {
             if (e.clientId !== r.client_id) return e
-            if (r.result === r.predicted) return { ...e, synced: true }
+            if (r.result === r.predicted && r.result !== 'unknown') return { ...e, synced: true }
             const map = {
               ok: ['ok', `Synced: ${r.product}`],
               duplicate: ['warn', 'Already counted on another device'],
@@ -139,158 +186,189 @@ function CountSession({ engine, orgId, session, settings, onBack }) {
 
   async function close() {
     const { data, error } = await supabase.rpc('close_count', { p_session: session.id, p_apply: apply })
-    if (error) return alert(error.message)
+    if (error) return ui.toast(error.message, 'error')
     setClosing(false)
     await engine.markSessionClosed(session.id)
     await engine.refreshOrg(orgId)
-    if (data.applied) alert(`Stocktake closed. ${data.lost} marked lost, ${data.found} returned to stock.`)
+    ui.toast(
+      data.applied
+        ? `Stocktake finished. ${data.lost} marked lost, ${data.found} returned to stock.`
+        : 'Stocktake finished. Stock levels were not changed.',
+      'ok',
+    )
   }
 
   const canClose = sync.online && pendingHere === 0
   const pct = summary?.expected ? Math.round((summary.matched / summary.expected) * 100) : 0
 
   return (
-    <div className="stack">
-      <div className="row wrap">
-        <button className="ghost" onClick={onBack}>
-          ← All stocktakes
-        </button>
-        <h2 className="grow">{session.name}</h2>
-        {closed ? (
-          <span className="pill closed">closed</span>
-        ) : (
-          <button className="primary" disabled={!canClose} onClick={() => setClosing(true)}>
-            Finish stocktake
-          </button>
-        )}
-      </div>
+    <>
+      <PageHeader
+        back={{ label: 'All stocktakes', onClick: onBack }}
+        title={session.name}
+        description={
+          <span className="row" style={{ gap: 8 }}>
+            <StatusBadge status={session.status} /> Started {formatDateTime(session.created_at)}
+          </span>
+        }
+        actions={
+          !closed && (
+            <button className="primary" disabled={!canClose} onClick={() => setClosing(true)}>
+              <Icon name="check" /> Finish stocktake
+            </button>
+          )
+        }
+      />
       {!closed && !canClose && (
         <div className="notice offline">
-          {pendingHere > 0
-            ? `${pendingHere} scan${pendingHere === 1 ? '' : 's'} of this stocktake still on this device. `
-            : ''}
-          Finishing needs a connection and every scan synced, so the result includes all devices. You can keep counting.
+          <Icon name="alert" />
+          <div>
+            {pendingHere > 0
+              ? `${pendingHere} scan${pendingHere === 1 ? '' : 's'} of this stocktake still on this device. `
+              : ''}
+            Finishing needs a connection and every scan synced, so the result includes all devices. You can keep
+            counting.
+          </div>
         </div>
       )}
 
       {summary && (
-        <div className="kpis">
-          <Kpi label="Expected in stock" value={summary.expected} />
-          <Kpi label="Counted" value={summary.matched} sub={`${pct}%`} />
-          <Kpi label="Missing" value={summary.missing.length} tone={summary.missing.length ? 'error' : ''} />
-          <Kpi label="Found (not expected)" value={summary.extra.length} tone={summary.extra.length ? 'warn' : ''} />
-          <Kpi label="Unknown codes" value={summary.unknown.length} tone={summary.unknown.length ? 'error' : ''} />
-        </div>
-      )}
-      {summary && (
-        <div className="progress">
-          <div style={{ width: `${pct}%` }} />
-        </div>
+        <Section>
+          <div className="progress-row" style={{ marginBottom: 16 }}>
+            <strong>
+              {summary.matched} of {summary.expected}
+            </strong>
+            <span className="muted">expected units counted</span>
+            <div className="progress">
+              <div style={{ width: `${pct}%` }} />
+            </div>
+            <strong>{pct}%</strong>
+          </div>
+          <div className="stats">
+            <Stat label="Expected in stock" value={summary.expected} />
+            <Stat label="Counted" value={summary.matched} tone={summary.matched ? 'ok' : ''} />
+            <Stat label="Missing" value={summary.missing.length} tone={summary.missing.length ? 'error' : ''} />
+            <Stat label="Found (not expected)" value={summary.extra.length} tone={summary.extra.length ? 'warn' : ''} />
+            <Stat label="Unknown codes" value={summary.unknown.length} tone={summary.unknown.length ? 'error' : ''} />
+          </div>
+        </Section>
       )}
 
       {!closed && (
-        <>
-          <ScanFlash entry={feed[0]} idle="Ready to count" />
-          <ScanInput onScan={handleScan} />
-        </>
+        <div className="scan-layout">
+          <div className="scan-controls">
+            <ScanFlash entry={feed[0]} idle="Ready to count" />
+            <ScanInput onScan={handleScan} />
+          </div>
+          <Section flush title="Scans on this device">
+            <div className="feed-panel">
+              {feed.length ? (
+                <ScanFeed entries={feed} />
+              ) : (
+                <EmptyState icon="scan" title="Start scanning">
+                  Every label you scan is counted once, even if several devices scan it.
+                </EmptyState>
+              )}
+            </div>
+          </Section>
+        </div>
       )}
-
-      <ScanFeed entries={feed} />
 
       {summary && (
         <div className="grid2">
-          <UnitList title="Missing" tone="error" items={summary.missing} empty="Nothing missing." />
-          <UnitList title="Found (system had them as out / lost)" tone="warn" items={summary.extra} empty="None." showStatus />
+          <UnitList title="Missing" description="Expected in stock but not scanned yet" tone="error" items={summary.missing} empty="Nothing missing." />
+          <UnitList
+            title="Found"
+            description="Scanned, but the system had them as out or lost"
+            tone="warn"
+            items={summary.extra}
+            empty="None."
+            showStatus
+          />
           {summary.unknown.length > 0 && (
-            <div className="card">
-              <h3>Unknown codes</h3>
-              <p className="muted small">Scanned but not registered — wrong label, or another system's barcode.</p>
+            <Section title="Unknown codes" description="Scanned but not registered — wrong label, or another system’s barcode.">
               <div className="codes">
                 {summary.unknown.map(c => (
                   <code key={c}>{c}</code>
                 ))}
               </div>
-            </div>
+            </Section>
           )}
         </div>
       )}
 
       {closing && (
-        <div className="modal-backdrop" onClick={() => setClosing(false)}>
-          <div className="card modal" onClick={e => e.stopPropagation()}>
-            <h2>Finish “{session.name}”?</h2>
-            <p>
-              {summary?.missing.length ?? 0} units were not scanned and {summary?.extra.length ?? 0} were found that the
-              system had as out or lost.
-            </p>
-            <label className="check">
-              <input type="checkbox" checked={apply} onChange={e => setApply(e.target.checked)} />
-              <span>
-                Update stock: mark missing units as <b>lost</b> and found units as <b>in stock</b>.
-              </span>
-            </label>
-            <p className="muted small">
-              Only tick this if you scanned the whole warehouse. A partial count would mark everything you didn’t reach as
-              lost. Other devices must have synced their scans first.
-            </p>
-            <div className="row end">
-              <button className="ghost" onClick={() => setClosing(false)}>
+        <Modal
+          title={`Finish “${session.name}”?`}
+          onClose={() => setClosing(false)}
+          footer={
+            <>
+              <button className="secondary" onClick={() => setClosing(false)}>
                 Keep counting
               </button>
               <button className="primary" onClick={close}>
                 Finish
               </button>
+            </>
+          }
+        >
+          <p className="muted">
+            {summary?.missing.length ?? 0} units were not scanned and {summary?.extra.length ?? 0} were found that the
+            system had as out or lost.
+          </p>
+          <label className="check">
+            <input type="checkbox" checked={apply} onChange={e => setApply(e.target.checked)} />
+            <span>
+              Update stock: mark missing units as <b>lost</b> and found units as <b>in stock</b>.
+            </span>
+          </label>
+          <div className="notice warn">
+            <Icon name="alert" />
+            <div>
+              Only tick this if you scanned the whole warehouse. A partial count marks everything you didn’t reach as
+              lost.
             </div>
           </div>
-        </div>
+        </Modal>
       )}
-    </div>
+    </>
   )
 }
 
-function Kpi({ label, value, sub, tone = '' }) {
-  return (
-    <div className={`kpi ${tone}`}>
-      <div className="kpi-value">
-        {value}
-        {sub && <small> {sub}</small>}
-      </div>
-      <div className="kpi-label">{label}</div>
-    </div>
-  )
-}
-
-function UnitList({ title, tone, items, empty, showStatus }) {
-  const [open, setOpen] = useState(true)
+function UnitList({ title, description, tone, items, empty, showStatus }) {
   const byProduct = items.reduce((acc, it) => {
     ;(acc[it.product] ??= []).push(it)
     return acc
   }, {})
   return (
-    <div className={`card unit-list ${tone}`}>
-      <h3 onClick={() => setOpen(!open)} className="clickable">
-        {title} <span className="muted">({items.length})</span>
-      </h3>
-      {open &&
-        (items.length === 0 ? (
-          <p className="muted small">{empty}</p>
-        ) : (
-          Object.entries(byProduct).map(([product, list]) => (
-            <div key={product} className="group">
-              <div className="group-title">
-                {product} <span className="muted">× {list.length}</span>
-              </div>
-              <div className="codes">
-                {list.map(it => (
-                  <code key={it.code} title={showStatus ? it.status : undefined}>
-                    {it.code}
-                    {showStatus && <small> · {it.status}</small>}
-                  </code>
-                ))}
-              </div>
+    <section className={`panel unit-list ${tone}`}>
+      <div className="panel-head">
+        <div>
+          <h2>
+            {title} <span className="muted">({items.length})</span>
+          </h2>
+          {description && <p className="panel-desc">{description}</p>}
+        </div>
+      </div>
+      {items.length === 0 ? (
+        <p className="muted small">{empty}</p>
+      ) : (
+        Object.entries(byProduct).map(([product, list]) => (
+          <div key={product} className="group">
+            <div className="group-title">
+              {product} <span className="muted">× {list.length}</span>
             </div>
-          ))
-        ))}
-    </div>
+            <div className="codes">
+              {list.map(it => (
+                <code key={it.code} title={showStatus ? it.status : undefined}>
+                  {it.code}
+                  {showStatus && <small> · {it.status}</small>}
+                </code>
+              ))}
+            </div>
+          </div>
+        ))
+      )}
+    </section>
   )
 }

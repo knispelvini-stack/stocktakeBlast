@@ -4,21 +4,24 @@ import { loadSettings, saveSettings } from './lib/settings.js'
 import { openLocalDb } from './lib/localdb.js'
 import { createSyncEngine } from './lib/sync.js'
 import Auth from './components/Auth.jsx'
-import AdminScreen from './components/AdminScreen.jsx'
+import OverviewScreen from './components/OverviewScreen.jsx'
 import MoveScreen from './components/MoveScreen.jsx'
 import CountScreen from './components/CountScreen.jsx'
 import ProductsScreen from './components/ProductsScreen.jsx'
 import HistoryScreen from './components/HistoryScreen.jsx'
 import SettingsScreen from './components/SettingsScreen.jsx'
 import SyncBadge from './components/SyncBadge.jsx'
+import Icon from './components/ui/Icon.jsx'
+import { useUI } from './components/ui/ui.jsx'
 
-const TABS = [
-  { id: 'move', label: 'Check out / in' },
-  { id: 'count', label: 'Stock\u00ADtake' }, // soft hyphen: breaks only on narrow phones
-  { id: 'history', label: 'History' },
-  { id: 'products', label: 'Products & labels' },
-  { id: 'settings', label: 'Scanner' },
-  { id: 'admin', label: 'Admin', ownerOnly: true },
+// Information architecture: daily work first, records second, configuration
+// out of the way (gear). Same five destinations on desktop and phone.
+const NAV = [
+  { id: 'overview', label: 'Overview', short: 'Home', icon: 'home', group: 'Operations' },
+  { id: 'move', label: 'Check out / in', short: 'Scan', icon: 'scan', group: 'Operations' },
+  { id: 'count', label: 'Stocktake', short: 'Count', icon: 'clipboard', group: 'Operations' },
+  { id: 'inventory', label: 'Inventory', short: 'Items', icon: 'box', group: 'Records' },
+  { id: 'activity', label: 'Activity', short: 'Activity', icon: 'activity', group: 'Records' },
 ]
 
 const dbPromise = configured ? openLocalDb() : null
@@ -28,13 +31,41 @@ async function rpc(name, args) {
   return { data, error, status }
 }
 
+function CenterMessage({ title, children, actions }) {
+  return (
+    <div className="auth-page">
+      <div className="card narrow">
+        <Logo dark />
+        <h1>{title}</h1>
+        <div className="muted">{children}</div>
+        {actions}
+      </div>
+    </div>
+  )
+}
+
+export function Logo({ dark, subtitle }) {
+  return (
+    <div className={dark ? 'auth-brand' : 'sidebar-brand'}>
+      <div className="logo-mark">
+        <Icon name="barcode" size={18} strokeWidth={2.2} />
+      </div>
+      <div className="logo-text">
+        stocktakeBlast
+        {subtitle && <small>{subtitle}</small>}
+      </div>
+    </div>
+  )
+}
+
 export default function App() {
+  const ui = useUI()
   const [session, setSession] = useState(undefined) // undefined = loading
   const [engine, setEngine] = useState(null)
   const [orgs, setOrgs] = useState(null)
   const [orgsError, setOrgsError] = useState(null)
   const [orgId, setOrgId] = useState(null)
-  const [tab, setTab] = useState('move')
+  const [tab, setTab] = useState(null) // null = default for this user
   const [historyCode, setHistoryCode] = useState('')
   const [settings, setSettings] = useState(loadSettings)
   const [pinBusy, setPinBusy] = useState(false) // keep the PIN screen mounted while joining
@@ -86,6 +117,7 @@ export default function App() {
 
   useEffect(() => {
     setOrgs(null)
+    setTab(null)
     loadOrgs()
   }, [loadOrgs, userId])
 
@@ -101,15 +133,14 @@ export default function App() {
     if (!engine || !orgId) return
     const refresh = () => {
       engine.refreshOrg(orgId)
-      supabase.rpc('touch_device', { p_org: orgId }).then(() => {}) // "last active" in Admin
+      supabase.rpc('touch_device', { p_org: orgId }).then(() => {}) // "last active" in Settings
     }
     refresh()
     const t = setInterval(refresh, 5 * 60_000)
-    const onOnline = refresh
-    window.addEventListener('online', onOnline)
+    window.addEventListener('online', refresh)
     return () => {
       clearInterval(t)
-      window.removeEventListener('online', onOnline)
+      window.removeEventListener('online', refresh)
     }
   }, [engine, orgId])
 
@@ -120,30 +151,40 @@ export default function App() {
 
   async function signOut() {
     const pending = engine?.getState().pending ?? 0
-    if (
-      pending &&
-      !confirm(
-        `${pending} scan${pending === 1 ? ' has' : 's have'} not been sent to the server yet.\n\n` +
-          'Signing out now DELETES them from this device. Connect to the internet and wait for “Synced” instead.\n\n' +
-          'Sign out anyway?',
-      )
-    )
-      return
-    if (!pending && isAnon && !confirm('Sign out this device? You will need the company PIN to get back in.')) return
+    if (pending) {
+      const ok = await ui.confirm({
+        title: 'Discard unsynced scans?',
+        body: (
+          <>
+            <p>
+              <strong>
+                {pending} scan{pending === 1 ? ' has' : 's have'} not reached the server yet.
+              </strong>
+            </p>
+            <p>Signing out deletes them from this device. Connect to the internet and wait for “Synced” instead.</p>
+          </>
+        ),
+        confirmLabel: 'Sign out and discard',
+        danger: true,
+      })
+      if (!ok) return
+    } else if (isAnon) {
+      const ok = await ui.confirm({
+        title: 'Sign out this device?',
+        body: 'You will need the company PIN to get back in.',
+        confirmLabel: 'Sign out',
+      })
+      if (!ok) return
+    }
     await engine?.clearAll() // shared devices: don't leave company data behind
     await supabase.auth.signOut({ scope: 'local' })
   }
 
   if (!configured) {
     return (
-      <div className="center-page">
-        <div className="card narrow">
-          <h1>Missing configuration</h1>
-          <p className="muted">
-            Copy <code>.env.example</code> to <code>.env</code> and fill in your Supabase URL and anon key.
-          </p>
-        </div>
-      </div>
+      <CenterMessage title="Missing configuration">
+        Copy <code>.env.example</code> to <code>.env</code> and fill in your Supabase URL and anon key.
+      </CenterMessage>
     )
   }
   if (session === undefined || !engine) return <div className="center-page muted">Loading…</div>
@@ -153,112 +194,181 @@ export default function App() {
   }
   if (orgsError) {
     return (
-      <div className="center-page">
-        <div className="card narrow">
-          <h1>Can’t load your company</h1>
-          <p className="muted">{orgsError}</p>
-          <button className="primary" onClick={loadOrgs}>
-            Try again
-          </button>
-          <button className="link" onClick={signOut}>
-            Sign out
-          </button>
-        </div>
-      </div>
+      <CenterMessage
+        title="Can’t load your company"
+        actions={
+          <div className="row">
+            <button className="primary" onClick={loadOrgs}>
+              Try again
+            </button>
+            <button className="ghost" onClick={signOut}>
+              Sign out
+            </button>
+          </div>
+        }
+      >
+        {orgsError}
+      </CenterMessage>
     )
   }
   if (orgs === null) return <div className="center-page muted">Loading…</div>
   if (!orgId) {
-    // An email account that isn't part of the company.
     return (
-      <div className="center-page">
-        <div className="card narrow">
-          <h1>No access</h1>
-          <p className="muted">
-            {session.user.email} is not part of this company. Staff sign in with the company PIN.
-          </p>
+      <CenterMessage
+        title="No access"
+        actions={
           <button className="primary" onClick={signOut}>
             Sign out and use the PIN
           </button>
-        </div>
-      </div>
+        }
+      >
+        {session.user.email} is not part of this company. Staff sign in with the company PIN.
+      </CenterMessage>
     )
   }
+
   const isOwner = current?.role === 'owner' && !isAnon
+  // Staff open straight into scanning; the owner lands on the overview.
+  const active = tab ?? (isOwner ? 'overview' : 'move')
+  const go = id => setTab(id)
+  const showHistory = code => {
+    setHistoryCode(code)
+    setTab('activity')
+  }
+  const who = {
+    name: isAnon ? current?.display_name || 'This device' : session.user.email,
+    role: isOwner ? 'Owner' : 'Staff device',
+  }
 
   return (
-    <Shell
-      engine={engine}
-      orgs={orgs}
-      orgId={orgId}
-      setOrgId={setOrgId}
-      tab={tab}
-      setTab={setTab}
-      signOut={signOut}
-      isOwner={isOwner}
-    >
-      {tab === 'move' && <MoveScreen engine={engine} orgId={orgId} settings={settings} />}
-      {tab === 'count' && <CountScreen engine={engine} orgId={orgId} settings={settings} />}
-      {tab === 'history' && (
+    <Shell engine={engine} orgName={current?.name} active={active} go={go} signOut={signOut} who={who}>
+      {active === 'overview' && <OverviewScreen engine={engine} orgId={orgId} go={go} onShowHistory={showHistory} />}
+      {active === 'move' && <MoveScreen engine={engine} orgId={orgId} settings={settings} />}
+      {active === 'count' && <CountScreen engine={engine} orgId={orgId} settings={settings} />}
+      {active === 'activity' && (
         <HistoryScreen engine={engine} orgId={orgId} settings={settings} initialCode={historyCode} />
       )}
-      {tab === 'products' && (
-        <ProductsScreen
-          engine={engine}
+      {active === 'inventory' && <ProductsScreen engine={engine} orgId={orgId} onShowHistory={showHistory} />}
+      {active === 'settings' && (
+        <SettingsScreen
+          settings={settings}
+          onChange={updateSettings}
+          isOwner={isOwner}
           orgId={orgId}
-          onShowHistory={code => {
-            setHistoryCode(code)
-            setTab('history')
-          }}
+          orgName={current?.name ?? ''}
+          onRenamed={loadOrgs}
+          who={who}
+          signOut={signOut}
         />
       )}
-      {tab === 'settings' && <SettingsScreen settings={settings} onChange={updateSettings} />}
-      {tab === 'admin' && isOwner && <AdminScreen orgId={orgId} orgName={current?.name ?? ''} onRenamed={loadOrgs} />}
     </Shell>
   )
 }
 
-function Shell({ engine, orgs, orgId, setOrgId, tab, setTab, signOut, isOwner, children }) {
+function Shell({ engine, orgName, active, go, signOut, who, children }) {
   const sync = useSyncExternalStore(engine.subscribe, engine.getState)
-  const current = useMemo(() => orgs.find(o => o.org_id === orgId), [orgs, orgId])
+  const initials = useMemo(
+    () =>
+      (who.name || '?')
+        .replace(/@.*/, '')
+        .split(/[\s._-]+/)
+        .filter(Boolean)
+        .slice(0, 2)
+        .map(s => s[0].toUpperCase())
+        .join('') || '?',
+    [who.name],
+  )
+
+  // Blur after navigating so a scanner's trailing Enter can't re-click it.
+  const nav = (id, e) => {
+    go(id)
+    e.currentTarget.blur()
+    window.scrollTo(0, 0)
+  }
+  const badgeFor = id => (id === 'activity' && sync.attention > 0 ? <span className="count">{sync.attention}</span> : null)
+
   return (
-    <div className="app">
-      <header className="topbar">
-        <div className="brand">
-          stocktake<span>Blast</span>
-        </div>
-        {orgs.length > 1 ? (
-          <select value={orgId} onChange={e => setOrgId(e.target.value)}>
-            {orgs.map(o => (
-              <option key={o.org_id} value={o.org_id}>
-                {o.name}
-              </option>
+    <div className="shell">
+      <aside className="sidebar">
+        <Logo subtitle={orgName} />
+        {['Operations', 'Records'].map(group => (
+          <div className="nav-group" key={group}>
+            <div className="nav-label">{group}</div>
+            {NAV.filter(n => n.group === group).map(n => (
+              <button
+                key={n.id}
+                data-nav={n.id}
+                className={`nav-item ${active === n.id ? 'active' : ''}`}
+                aria-current={active === n.id ? 'page' : undefined}
+                onClick={e => nav(n.id, e)}
+              >
+                <Icon name={n.icon} />
+                {n.label}
+                {badgeFor(n.id)}
+              </button>
             ))}
-          </select>
-        ) : (
-          <div className="org">{current?.name}</div>
-        )}
-        <SyncBadge sync={sync} onClick={() => setTab('history')} onRetry={() => engine.flush()} />
-        <button className="ghost" onClick={signOut}>
-          Sign out
-        </button>
-      </header>
-      <nav className="tabs">
-        {TABS.filter(t => !t.ownerOnly || isOwner).map(t => (
+          </div>
+        ))}
+        <div className="sidebar-foot">
           <button
-            key={t.id}
-            className={tab === t.id ? 'active' : ''}
-            onClick={e => {
-              setTab(t.id)
-              e.currentTarget.blur() // keep Enter from the scanner off this button
-            }}
+            data-nav="settings"
+            className={`nav-item ${active === 'settings' ? 'active' : ''}`}
+            onClick={e => nav('settings', e)}
           >
-            {t.label}
-            {t.id === 'history' && sync.attention > 0 && <span className="badge">{sync.attention}</span>}
+            <Icon name="settings" />
+            Settings
+          </button>
+          <SyncBadge sync={sync} onClick={() => go('activity')} onRetry={() => engine.flush()} />
+          <div className="who">
+            <div className="avatar">{initials}</div>
+            <div className="who-text">
+              <div className="who-name" title={who.name}>
+                {who.name}
+              </div>
+              <div className="who-role">{who.role}</div>
+            </div>
+            <button className="icon-btn" onClick={signOut} aria-label="Sign out" title="Sign out">
+              <Icon name="logout" />
+            </button>
+          </div>
+        </div>
+      </aside>
+
+      <div className="main">
+        <header className="mobile-top">
+          <div className="logo-mark">
+            <Icon name="barcode" size={16} strokeWidth={2.2} />
+          </div>
+          <div className="logo-text">{orgName}</div>
+          <SyncBadge sync={sync} compact onClick={() => go('activity')} onRetry={() => engine.flush()} />
+          <button
+            data-nav-mobile="settings"
+            className={`icon-btn ${active === 'settings' ? 'active' : ''}`}
+            onClick={e => nav('settings', e)}
+            aria-label="Settings"
+          >
+            <Icon name="settings" size={20} />
+          </button>
+        </header>
+
+        <main className="content">{children}</main>
+      </div>
+
+      <nav className="bottom-nav" aria-label="Main">
+        {NAV.map(n => (
+          <button
+            key={n.id}
+            data-nav-mobile={n.id}
+            className={active === n.id ? 'active' : ''}
+            aria-current={active === n.id ? 'page' : undefined}
+            onClick={e => nav(n.id, e)}
+          >
+            <Icon name={n.icon} size={21} />
+            {n.short}
+            {badgeFor(n.id)}
           </button>
         ))}
       </nav>
-      <main className="content">{children}</main>
     </div>
   )
 }

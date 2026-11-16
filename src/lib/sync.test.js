@@ -101,6 +101,25 @@ test('offline move: instant prediction, cached status, queued', async () => {
   assert.equal(r2.result, 'already')
 })
 
+test('out reference is cached for the Overview and cleared on check-in', async () => {
+  const { engine, server, db } = await setup()
+  server.online = false
+  await engine.recordMove({ orgId: ORG, code: 'AAAA1111', direction: 'out', reference: 'Van 2' })
+  let u = await db.get('units', 'u1')
+  assert.equal(u.last_ref, 'Van 2')
+  assert.ok(u.out_since)
+  assert.equal((await engine.listUnits(ORG)).length, 1)
+  // a refresh from the server before sync keeps the pending reference
+  server.online = true
+  server.dropResponseOnce = false
+  await engine.pullUnits(ORG)
+  assert.equal((await db.get('units', 'u1')).last_ref, 'Van 2')
+  await engine.recordMove({ orgId: ORG, code: 'AAAA1111', direction: 'in' })
+  u = await db.get('units', 'u1')
+  assert.equal(u.status, 'in_stock')
+  assert.equal(u.last_ref, null)
+})
+
 test('back online: outbox drains, history written, server status applied', async () => {
   const { engine, server, db } = await setup()
   server.online = false

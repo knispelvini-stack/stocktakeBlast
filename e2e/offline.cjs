@@ -21,6 +21,13 @@ const sessionJson = JSON.stringify({
 
 const step = msg => console.log('✓', msg)
 
+// The owner lands on the Overview; scanning lives under "Check out / in".
+async function openScan(page, opts) {
+  await page.waitForSelector('[data-nav="move"]', opts)
+  await page.click('[data-nav="move"]')
+  await page.waitForSelector('text=Ready to check OUT', opts)
+}
+
 async function scan(page, code) {
   await page.mouse.click(2, 300) // focus the page, not a field
   await page.keyboard.type(code, { delay: 6 })
@@ -35,22 +42,23 @@ async function scan(page, code) {
   const page = await ctx.newPage()
   const errors = []
   page.on('pageerror', e => errors.push(e.message))
-  const badge = page.locator('.sync-main')
+  const badge = page.locator('.sidebar .sync-main')
   const flash = page.locator('.flash-title')
 
   // ── online start: cache warm-up + service worker install
   await page.goto('http://localhost:5190/')
-  await page.waitForSelector('text=Ready to check OUT')
+  await page.waitForSelector('h1:has-text("Overview")')
+  await openScan(page)
   await page.waitForFunction(() => navigator.serviceWorker?.controller || null, null, { timeout: 10000 }).catch(() => {})
   await page.reload() // second load is SW-controlled
-  await page.waitForSelector('text=Ready to check OUT')
+  await openScan(page)
   assert.ok(await page.evaluate(() => !!navigator.serviceWorker.controller), 'service worker controls the page')
   await badge.filter({ hasText: 'Synced' }).waitFor()
   step('online: app loaded, service worker active, badge "Synced"')
 
   await scan(page, c1)
   await flash.filter({ hasText: 'Checked out' }).waitFor()
-  await page.waitForFunction(() => document.querySelector('.feed li .time')?.textContent.includes('☁'))
+  await page.waitForFunction(() => document.querySelector('.feed li .time')?.textContent.includes('synced'))
   assert.equal((await q('select status from units where code=$1', [c1]))[0].status, 'out')
   step(`online scan ${c1}: instant feedback, confirmed by server, DB status = out`)
 
@@ -74,20 +82,21 @@ async function scan(page, code) {
 
   // ── reload while offline: app must still open and keep the queue
   await page.reload()
-  await page.waitForSelector('text=Ready to check OUT', { timeout: 10000 })
+  await openScan(page, { timeout: 10000 })
   await badge.filter({ hasText: 'Offline · 3 saved on device' }).waitFor()
   await page.screenshot({ path: `${OUT}/1-offline-after-reload.png` })
   step('page reloaded while offline: app opens from cache, 3 scans still queued (incl. the repeat, which the server decides), still signed in')
 
   // offline history shows the pending rows
-  await page.click('.tabs button:has-text("History")')
+  await page.click('[data-nav="activity"]')
   await page.waitForSelector('text=waiting to sync')
   assert.equal(await page.locator('.pending-row').count(), 3)
   await page.waitForSelector('text=Offline — showing')
   step('History offline: 3 pending rows + cached movements')
 
   // ── offline stocktake
-  await page.click('.tabs button:has-text("Stocktake")')
+  await page.click('[data-nav="count"]')
+  await page.click('button:has-text("New stocktake")')
   await page.fill('input[placeholder^="Stocktake"]', 'Offline count')
   await page.click('button:has-text("Start counting")')
   await page.waitForSelector('text=Ready to count')
@@ -102,7 +111,7 @@ async function scan(page, code) {
   // ── back online: everything syncs
   await ctx.setOffline(false)
   await badge.filter({ hasText: 'Synced' }).waitFor({ timeout: 20000 })
-  await page.waitForSelector('.sync-att', { timeout: 5000 })
+  await page.waitForSelector('.sidebar .sync-att', { timeout: 5000 })
   const st = Object.fromEntries((await q('select code, status from units')).map(r => [r.code, r.status]))
   assert.equal(st[c2], 'out', 'offline move applied')
   assert.equal(st[c3], 'in_stock', 'older offline move did not override newer one')
@@ -117,7 +126,7 @@ async function scan(page, code) {
   step('online again: queue drained, c2 out, c3 conflict resolved by scan time, session + 2 scans on server, no duplicates')
 
   // ── history + attention
-  await page.click('.tabs button:has-text("History")')
+  await page.click('[data-nav="activity"]')
   await page.waitForSelector('text=Needs attention (1)')
   await page.waitForSelector('.late-row')
   assert.equal(await page.locator('.pending-row').count(), 0)

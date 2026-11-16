@@ -1,16 +1,51 @@
 import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase.js'
+import Icon from './ui/Icon.jsx'
+import { Section, Badge, useUI, timeAgo, formatDateTime } from './ui/ui.jsx'
 
-// Owner-only: company name, PIN, devices. Every action is re-checked on the
-// server (_require_owner); hiding the tab is only convenience.
-export default function AdminScreen({ orgId, orgName, onRenamed }) {
+// Owner-only settings. Every action is re-checked on the server
+// (_require_owner); hiding these sections from staff is only convenience.
+
+export function CompanySettings({ orgId, orgName, onRenamed }) {
+  const ui = useUI()
   const [name, setName] = useState(orgName)
+  const [saving, setSaving] = useState(false)
+  const dirty = name.trim() && name.trim() !== orgName
+
+  async function rename(e) {
+    e.preventDefault()
+    setSaving(true)
+    const { error } = await supabase.from('orgs').update({ name: name.trim() }).eq('id', orgId)
+    setSaving(false)
+    if (error) return ui.toast(error.message, 'error')
+    ui.toast('Company name saved.', 'ok')
+    onRenamed()
+  }
+
+  return (
+    <Section title="Company" description="Shown in the app header and on every device.">
+      <form onSubmit={rename} className="stack" style={{ gap: 14 }}>
+        <label>
+          Company name
+          <input required maxLength={80} value={name} onChange={e => setName(e.target.value)} />
+        </label>
+        <div className="row end">
+          <button className="primary" disabled={!dirty || saving}>
+            {saving ? 'Saving…' : 'Save changes'}
+          </button>
+        </div>
+      </form>
+    </Section>
+  )
+}
+
+export function AccessSettings({ orgId }) {
+  const ui = useUI()
   const [status, setStatus] = useState(null)
   const [devices, setDevices] = useState(null)
   const [pin, setPin] = useState('')
   const [pin2, setPin2] = useState('')
   const [kick, setKick] = useState(false)
-  const [msg, setMsg] = useState(null)
   const [busy, setBusy] = useState(false)
 
   const load = useCallback(async () => {
@@ -18,158 +53,163 @@ export default function AdminScreen({ orgId, orgName, onRenamed }) {
       supabase.rpc('pin_status', { p_org: orgId }),
       supabase.rpc('list_devices', { p_org: orgId }),
     ])
-    if (s.error || d.error) return setMsg({ type: 'error', text: (s.error || d.error).message })
+    if (s.error || d.error) return ui.toast((s.error || d.error).message, 'error')
     setStatus(s.data)
     setDevices(d.data)
-  }, [orgId])
+  }, [orgId, ui])
 
   useEffect(() => {
     load()
   }, [load])
 
-  async function rename(e) {
-    e.preventDefault()
-    const { error } = await supabase.from('orgs').update({ name: name.trim() }).eq('id', orgId)
-    if (error) return setMsg({ type: 'error', text: error.message })
-    setMsg({ type: 'ok', text: 'Company name saved.' })
-    onRenamed()
-  }
-
   async function savePin(e) {
     e.preventDefault()
-    if (pin !== pin2) return setMsg({ type: 'error', text: 'The two PINs don’t match.' })
-    if (kick && !confirm('Sign out every PIN device? Staff will need the new PIN on each device.')) return
+    if (pin !== pin2) return ui.toast('The two PINs don’t match.', 'error')
+    if (kick) {
+      const ok = await ui.confirm({
+        title: 'Sign out every PIN device?',
+        body: 'Staff will need the new PIN on each device. Use this when someone leaves the company.',
+        confirmLabel: 'Change PIN and sign out devices',
+        danger: true,
+      })
+      if (!ok) return
+    }
     setBusy(true)
     const { data, error } = await supabase.rpc('set_pin', { p_org: orgId, p_pin: pin, p_remove_devices: kick })
     setBusy(false)
-    if (error) return setMsg({ type: 'error', text: error.message })
+    if (error) return ui.toast(error.message, 'error')
     setPin('')
     setPin2('')
     setKick(false)
-    setMsg({
-      type: 'ok',
-      text: `PIN saved.${data.removed_devices ? ` ${data.removed_devices} device(s) signed out.` : ''}`,
-    })
+    ui.toast(`PIN saved.${data.removed_devices ? ` ${data.removed_devices} device(s) signed out.` : ''}`, 'ok')
     load()
   }
 
   async function remove(d) {
-    if (!confirm(`Remove “${d.name}”? That device will need the PIN to get back in.`)) return
+    const ok = await ui.confirm({
+      title: `Remove “${d.name}”?`,
+      body: 'That device is signed out and will need the company PIN to get back in. The PIN itself keeps working until you change it.',
+      confirmLabel: 'Remove device',
+      danger: true,
+    })
+    if (!ok) return
     const { error } = await supabase.rpc('remove_device', { p_org: orgId, p_user: d.user_id })
-    if (error) return setMsg({ type: 'error', text: error.message })
+    if (error) return ui.toast(error.message, 'error')
+    ui.toast(`${d.name} removed.`, 'ok')
     load()
   }
 
   return (
-    <div className="stack">
-      {msg && <div className={`notice ${msg.type}`}>{msg.text}</div>}
-
-      <form className="card row wrap" onSubmit={rename}>
-        <label className="grow">
-          Company name
-          <input required maxLength={80} value={name} onChange={e => setName(e.target.value)} />
-        </label>
-        <button className="secondary">Save</button>
-      </form>
-
-      <form className="card stack" onSubmit={savePin}>
-        <div>
-          <h2>Company PIN</h2>
-          <p className="muted small">
-            {status === null
-              ? 'Loading…'
-              : status.has_pin
-                ? `Set · last changed ${new Date(status.updated_at).toLocaleString()}`
-                : 'No PIN yet — staff can’t sign in until you set one.'}
-          </p>
-        </div>
-        <div className="row wrap">
-          <label className="grow">
-            New PIN (6–12 digits)
-            <input
-              className="pin-input"
-              type="password"
-              inputMode="numeric"
-              autoComplete="new-password"
-              pattern="[0-9]{6,12}"
-              required
-              maxLength={12}
-              value={pin}
-              onChange={e => setPin(e.target.value.replace(/\D/g, ''))}
-            />
+    <>
+      <Section
+        title="Company PIN"
+        description={
+          status === null
+            ? 'Loading…'
+            : status.has_pin
+              ? `Staff sign in with this PIN · last changed ${formatDateTime(status.updated_at)}`
+              : 'No PIN yet — staff can’t sign in until you set one.'
+        }
+        actions={status && (status.has_pin ? <Badge tone="ok">Active</Badge> : <Badge tone="warn">Not set</Badge>)}
+      >
+        <form onSubmit={savePin} className="stack" style={{ gap: 14 }}>
+          <div className="form-row">
+            <label>
+              New PIN
+              <input
+                className="pin-input"
+                type="password"
+                inputMode="numeric"
+                autoComplete="new-password"
+                pattern="[0-9]{6,12}"
+                title="6 to 12 digits"
+                required
+                maxLength={12}
+                value={pin}
+                onChange={e => setPin(e.target.value.replace(/\D/g, ''))}
+              />
+              <span className="hint">6–12 digits. Avoid obvious ones (123456, birthdays).</span>
+            </label>
+            <label>
+              Repeat PIN
+              <input
+                className="pin-input"
+                type="password"
+                inputMode="numeric"
+                autoComplete="new-password"
+                required
+                maxLength={12}
+                value={pin2}
+                onChange={e => setPin2(e.target.value.replace(/\D/g, ''))}
+              />
+            </label>
+          </div>
+          <label className="check">
+            <input type="checkbox" checked={kick} onChange={e => setKick(e.target.checked)} />
+            <span>
+              Also sign out every PIN device
+              <span className="hint" style={{ display: 'block' }}>
+                Use this when someone leaves the company.
+              </span>
+            </span>
           </label>
-          <label className="grow">
-            Repeat PIN
-            <input
-              className="pin-input"
-              type="password"
-              inputMode="numeric"
-              autoComplete="new-password"
-              required
-              maxLength={12}
-              value={pin2}
-              onChange={e => setPin2(e.target.value.replace(/\D/g, ''))}
-            />
-          </label>
-        </div>
-        <label className="check">
-          <input type="checkbox" checked={kick} onChange={e => setKick(e.target.checked)} />
-          <span>Also sign out every PIN device (use this when someone leaves the company)</span>
-        </label>
-        <p className="muted small">
-          Avoid obvious PINs (123456, birthdays). After 5 wrong tries a device is blocked for 15 minutes.
-        </p>
-        <div className="row end">
-          <button className="primary" disabled={busy}>
-            {busy ? '…' : status?.has_pin ? 'Change PIN' : 'Set PIN'}
-          </button>
-        </div>
-      </form>
+          <div className="row" style={{ justifyContent: 'space-between' }}>
+            <span className="hint">
+              <Icon name="shield" size={13} /> 5 wrong tries block a device for 15 minutes.
+            </span>
+            <button className="primary" disabled={busy}>
+              {busy ? 'Saving…' : status?.has_pin ? 'Change PIN' : 'Set PIN'}
+            </button>
+          </div>
+        </form>
+      </Section>
 
-      <div className="card">
-        <h2>Devices</h2>
-        <p className="muted small">
-          Everyone who entered the PIN. Removing a device signs it out; the PIN still works until you change it.
-        </p>
+      <Section flush title="Devices" description="Everyone who signed in. Removing a device signs it out.">
         {devices === null ? (
-          <p className="muted">Loading…</p>
+          <p className="muted" style={{ padding: 20 }}>
+            Loading…
+          </p>
         ) : (
           <div className="table-wrap">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>Name</th>
-                <th className="hide-sm">Type</th>
-                <th className="hide-sm">Last active</th>
-                <th />
-              </tr>
-            </thead>
-            <tbody>
-              {devices.map(d => (
-                <tr key={d.user_id}>
-                  <td>
-                    <strong>{d.name}</strong>
-                    {d.role === 'owner' && <span className="pill show-sm"> owner</span>}
-                    {d.email && d.email !== d.name && <span className="muted small"> · {d.email}</span>}
-                  </td>
-                  <td className="hide-sm">{d.role === 'owner' ? <span className="pill">owner</span> : 'PIN device'}</td>
-                  <td className="muted small hide-sm">
-                    {d.last_seen_at ? new Date(d.last_seen_at).toLocaleString() : new Date(d.joined_at).toLocaleString()}
-                  </td>
-                  <td className="num">
-                    {d.role === 'member' && (
-                      <button className="link" onClick={() => remove(d)}>
-                        Remove
-                      </button>
-                    )}
-                  </td>
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th className="hide-sm">Type</th>
+                  <th className="hide-sm">Last active</th>
+                  <th aria-label="Actions" />
                 </tr>
-              ))}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {devices.map(d => (
+                  <tr key={d.user_id}>
+                    <td className="primary-cell">
+                      {d.name}
+                      {d.role === 'owner' && (
+                        <span className="show-sm">
+                          <Badge tone="accent">Owner</Badge>
+                        </span>
+                      )}
+                      {d.email && d.email !== d.name && <div className="muted small">{d.email}</div>}
+                    </td>
+                    <td className="hide-sm">{d.role === 'owner' ? <Badge tone="accent">Owner</Badge> : <span className="muted">PIN device</span>}</td>
+                    <td className="muted small hide-sm" title={d.last_seen_at || d.joined_at}>
+                      {timeAgo(d.last_seen_at || d.joined_at)}
+                    </td>
+                    <td className="num">
+                      {d.role === 'member' && (
+                        <button className="link danger-text" onClick={() => remove(d)}>
+                          Remove
+                        </button>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         )}
-      </div>
-    </div>
+      </Section>
+    </>
   )
 }

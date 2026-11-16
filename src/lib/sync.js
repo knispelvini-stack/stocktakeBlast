@@ -12,6 +12,14 @@ import { ALL_STORES } from './localdb.js'
 import { normalizeCode } from './scanDetector.js'
 import { predictMove, predictScan, computeSummary, needsAttention, isRetryable, isAuthError } from './predict.js'
 
+// Where an out unit is (reference) and since when — shown on the Overview.
+// Cleared whenever the unit is no longer out.
+function withMove(unit, status, ev) {
+  if (status !== 'out') return { ...unit, status, last_ref: null, out_since: null }
+  if (ev && ev.direction === 'out') return { ...unit, status, last_ref: ev.reference ?? null, out_since: ev.scanned_at }
+  return { ...unit, status }
+}
+
 const BATCH = 100
 const HISTORY_CACHE_PER_ORG = 1000
 
@@ -91,7 +99,7 @@ export function createSyncEngine({
     }
     await tx.objectStore('outbox').put(ev)
     if (pred.result === 'ok') {
-      await tx.objectStore('units').put({ ...unit, status: pred.status, last_moved_at: ev.scanned_at })
+      await tx.objectStore('units').put({ ...withMove(unit, pred.status, ev), last_moved_at: ev.scanned_at })
     }
     await tx.done
     await afterRecord()
@@ -233,7 +241,7 @@ export function createSyncEngine({
       if (ev.kind === 'move') {
         if (res.unit_id && res.status) {
           const unit = await tx.objectStore('units').get(res.unit_id)
-          if (unit) await tx.objectStore('units').put({ ...unit, status: res.status })
+          if (unit) await tx.objectStore('units').put(withMove(unit, res.status, res.result === 'ok' ? ev : null))
         }
         if (res.result === 'ok' || res.result === 'late') {
           await tx.objectStore('history').put({
@@ -323,7 +331,7 @@ export function createSyncEngine({
     for (const ev of pending) {
       const u = byCode.get(ev.code)
       const p = predictMove(u, ev.direction)
-      if (p.result === 'ok') byCode.set(ev.code, { ...u, status: p.status })
+      if (p.result === 'ok') byCode.set(ev.code, withMove(u, p.status, ev))
     }
     for (const row of byCode.values()) await units.put(row)
     await tx.objectStore('meta').put(now().toISOString(), `unitsPulledAt:${orgId}`)
@@ -375,6 +383,10 @@ export function createSyncEngine({
   }
 
   // ───────── local reads ─────────
+  async function listUnits(orgId) {
+    return db.getAllFromIndex('units', 'org', orgId)
+  }
+
   async function sessionSummary(orgId, sessionId) {
     const [units, scans] = await Promise.all([
       db.getAllFromIndex('units', 'org', orgId),
@@ -509,6 +521,7 @@ export function createSyncEngine({
     markSessionClosed,
     clearAll,
     // reads
+    listUnits,
     sessionSummary,
     listSessions,
     pendingEvents,

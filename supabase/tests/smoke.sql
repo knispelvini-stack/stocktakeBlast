@@ -58,6 +58,8 @@ select sync_events(jsonb_build_array(jsonb_build_object(
   'direction','out','reference','Van 2','scanned_at', now() - interval '1 hour'))) as r \gset
 select pg_temp.check((:'r'::jsonb)->0->>'result' = 'ok', 'move out ok (lowercase code normalised)');
 select pg_temp.check((select status from units where code = :'c1') = 'out', 'unit is out');
+select pg_temp.check((select e->>'last_ref' from jsonb_array_elements(pull_units(:'org_a')) e where e->>'code' = :'c1') = 'Van 2', 'pull_units: out reference');
+select pg_temp.check((select e->>'last_ref' from jsonb_array_elements(pull_units(:'org_a')) e where e->>'code' = :'c2') is null, 'pull_units: no reference when in stock');
 
 -- retry of the SAME event (lost response) must not duplicate
 select sync_events(jsonb_build_array(jsonb_build_object(
@@ -179,6 +181,10 @@ select pg_temp.check(pg_temp.fails(format('select remove_device(%L, %L)', :'org_
 select remove_device(:'org_a', 'cccccccc-0000-0000-0000-000000000003');
 select pg_temp.as_user('cccccccc-0000-0000-0000-000000000003') \gset
 select pg_temp.check(pg_temp.fails(format('select pull_units(%L)', :'org_a')), 'removed device loses access');
+select pg_temp.as_user('aaaaaaaa-0000-0000-0000-000000000001') \gset
+select pg_temp.check(movement_history(:'org_a', p_code => :'c3')->0->>'user_label' = 'Joao (removed)', 'history keeps the name of a removed device');
+select pg_temp.check(pg_temp.fails('select * from device_names'), 'device_names not readable');
+select pg_temp.as_user('cccccccc-0000-0000-0000-000000000003') \gset
 select pg_temp.check(join_with_pin('482915', 'Joao') = :'org_a'::uuid, 'removed device can rejoin with PIN');
 select pg_temp.as_user('aaaaaaaa-0000-0000-0000-000000000001') \gset
 select pg_temp.check((set_pin(:'org_a', '736251', true)->>'removed_devices')::int = 1, 'rotate PIN + sign out all devices');

@@ -1,5 +1,20 @@
 import { useState } from 'react'
 import { supabase } from '../lib/supabase.js'
+import Icon from './ui/Icon.jsx'
+
+function BrandMark() {
+  return (
+    <div className="auth-brand">
+      <div className="logo-mark">
+        <Icon name="barcode" size={18} strokeWidth={2.2} />
+      </div>
+      <div className="logo-text">
+        stocktakeBlast
+        <small>Inventory</small>
+      </div>
+    </div>
+  )
+}
 
 const NAME_KEY = 'stb.deviceName'
 
@@ -72,13 +87,16 @@ export default function Auth({ onBusy, onJoined }) {
   }
 
   return (
-    <div className="center-page">
+    <div className="auth-page">
       {mode === 'pin' ? (
         <form className="card narrow" onSubmit={enterPin}>
-          <div className="brand big">
-            stocktake<span>Blast</span>
+          <BrandMark />
+          <div>
+            <h1>Sign in to this device</h1>
+            <p className="muted" style={{ marginTop: 6 }}>
+              Enter your name and the company PIN. You only do this once on each device.
+            </p>
           </div>
-          <p className="muted">Enter your name and the company PIN. You only do this once on each device.</p>
           <label>
             Your name
             <input required maxLength={40} autoComplete="name" value={name} onChange={e => setName(e.target.value)} />
@@ -98,18 +116,30 @@ export default function Auth({ onBusy, onJoined }) {
               onChange={e => setPin(e.target.value.replace(/\D/g, ''))}
             />
           </label>
-          {msg && <div className="notice error">{msg}</div>}
-          <button className="primary" disabled={busy}>
-            {busy ? '…' : 'Enter'}
+          {msg && (
+            <div className="notice error" role="alert">
+              <Icon name="alert" /> <div>{msg}</div>
+            </div>
+          )}
+          <button className="primary" disabled={busy} style={{ minHeight: 44 }}>
+            {busy ? 'Checking…' : 'Enter'}
           </button>
-          <button type="button" className="link" onClick={() => (setMode('owner'), setMsg(null))}>
-            Owner sign-in
-          </button>
+          <div className="auth-foot muted small">
+            Owner?{' '}
+            <button type="button" className="link" onClick={() => (setMode('owner'), setMsg(null))}>
+              Owner sign-in
+            </button>
+          </div>
         </form>
       ) : (
         <form className="card narrow" onSubmit={ownerSignIn}>
-          <h1>Owner sign-in</h1>
-          <p className="muted">For managing the PIN and devices.</p>
+          <BrandMark />
+          <div>
+            <h1>Owner sign-in</h1>
+            <p className="muted" style={{ marginTop: 6 }}>
+              Manage the company, the PIN and devices.
+            </p>
+          </div>
           <label>
             Email
             <input type="email" required autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} />
@@ -124,13 +154,19 @@ export default function Auth({ onBusy, onJoined }) {
               onChange={e => setPassword(e.target.value)}
             />
           </label>
-          {msg && <div className="notice error">{msg}</div>}
-          <button className="primary" disabled={busy}>
-            {busy ? '…' : 'Sign in'}
+          {msg && (
+            <div className="notice error" role="alert">
+              <Icon name="alert" /> <div>{msg}</div>
+            </div>
+          )}
+          <button className="primary" disabled={busy} style={{ minHeight: 44 }}>
+            {busy ? 'Signing in…' : 'Sign in'}
           </button>
-          <button type="button" className="link" onClick={() => (setMode('pin'), setMsg(null))}>
-            ← Back to PIN
-          </button>
+          <div className="auth-foot">
+            <button type="button" className="link" onClick={() => (setMode('pin'), setMsg(null))}>
+              ← Back to PIN sign-in
+            </button>
+          </div>
         </form>
       )}
     </div>
