@@ -39,7 +39,26 @@ Local:
 The database is still multi-tenant (every row has `org_id`, RLS per membership), so a second
 company later is a data step, not a rewrite.
 
-## How the scanner works
+## Item codes and labels
+
+Every physical piece has one label with a meaningful code:
+
+| Type | Pattern | Example | Notes |
+|---|---|---|---|
+| Banner | `BAN-<THEME PREFIX><size>-NN` | `BAN-PAW45-01` = Banner, Paw Patrol, 4x5, piece 01 | A theme has exactly one prefix, used for every size. The database computes the stem. |
+| Castle | `CAS-NNN` | `CAS-001` | Scheme not final. Products sharing `CAS` share one numbering. |
+| Blower | entered by hand | `BLO-C3` | Scheme not final. |
+| Other | `<START>-NN`, or random | `TBL-01` / `8AJLGU62` | Blank start = old random 8-character codes. |
+
+- Piece numbers are counted per code start across the company, allocated under a lock, and
+  **never reused** (a retired `-02` stays taken).
+- **Lost or damaged** piece → reprint the same code (Inventory → **Labels** → Reprint, works
+  offline). **Discarded** piece → **Retire** (status `retired`; rows are never deleted — there is no
+  delete permission on units or products).
+- Labels: Code 128 barcode (any scanner) or QR (2D scanners only), with the code printed large.
+  On A4 (Avery L7159) codes up to ~13 characters scan comfortably; the app warns above that.
+
+
 
 A scanner in HID mode types the code very fast and presses Enter. `src/lib/scanDetector.js`
 buffers keys while the gap between them stays under a threshold (default 50 ms — humans type

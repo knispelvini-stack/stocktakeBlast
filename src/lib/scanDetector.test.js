@@ -76,3 +76,17 @@ test('normalizeCode trims and uppercases', () => {
   assert.equal(normalizeCode('  ab12cd \n'), 'AB12CD')
   assert.equal(normalizeCode(null), '')
 })
+
+import { bannerStem, normalizeSize, pieceCode, suggestPrefix, cleanStem, PREFIX_RE } from './itemCodes.js'
+
+test('item codes: BAN-<PREFIX><size>-NN', () => {
+  assert.equal(normalizeSize('4', '5'), '4x5')
+  assert.equal(normalizeSize(' 10 ', '12m'), '10x12')
+  assert.equal(normalizeSize('4', ''), '')
+  assert.equal(bannerStem('paw', '4x5'), 'BAN-PAW45')
+  assert.equal(pieceCode('BAN-PAW45', 1), 'BAN-PAW45-01')
+  assert.equal(pieceCode('CAS', 7, 3), 'CAS-007')
+  assert.equal(suggestPrefix('Paw Patrol'), 'PAW')
+  assert.equal(cleanStem(' cas_- '), 'CAS')
+  assert.ok(PREFIX_RE.test('PAW') && !PREFIX_RE.test('P') && !PREFIX_RE.test('1AB'))
+})
