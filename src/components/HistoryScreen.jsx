@@ -28,13 +28,18 @@ function toIsoEndExclusive(d) {
 export default function HistoryScreen({ engine, orgId, settings, initialCode = '' }) {
   const ui = useUI()
   const sync = useSyncExternalStore(engine.subscribe, engine.getState)
-  const [filters, setFilters] = useState({ code: initialCode, direction: '', reference: '', from: '', to: '' })
+  const [filters, setFilters] = useState({ code: initialCode, direction: '', reference: '', from: '', to: '', vehicle: '' })
   const [rows, setRows] = useState(null)
   const [source, setSource] = useState('server')
   const [hasMore, setHasMore] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [pending, setPending] = useState([])
   const [attention, setAttention] = useState([])
+  const [vehicles, setVehicles] = useState([])
+  useEffect(() => {
+    engine.listVehicles(orgId).then(setVehicles)
+  }, [engine, orgId, sync.version])
+  const vName = r => r.vehicle ?? vehicles.find(v => v.id === r.vehicle_id)?.name ?? null
 
   // Scanning a label on this screen filters by that unit.
   useScanner(code => setFilters(f => ({ ...f, code })), settings)
@@ -50,6 +55,7 @@ export default function HistoryScreen({ engine, orgId, settings, initialCode = '
       p_before_at: cursor?.scanned_at ?? null,
       p_before_id: cursor?.id ?? null,
       p_limit: PAGE,
+      p_vehicle: filters.vehicle || null,
     }),
     [orgId, filters],
   )
@@ -59,6 +65,7 @@ export default function HistoryScreen({ engine, orgId, settings, initialCode = '
       code: filters.code,
       direction: filters.direction,
       reference: filters.reference,
+      vehicle: filters.vehicle,
       from: toIsoStart(filters.from),
       to: toIsoEndExclusive(filters.to),
     }
@@ -101,11 +108,11 @@ export default function HistoryScreen({ engine, orgId, settings, initialCode = '
       ...pending.map(p => ({ ...p, applied: null, user_label: 'this device', status: 'pending sync' })),
       ...(rows ?? []).map(r => ({ ...r, status: r.applied ? 'applied' : 'not applied (late)' })),
     ]
-    const head = ['scanned_at', 'code', 'product', 'direction', 'reference', 'user', 'status']
+    const head = ['scanned_at', 'code', 'product', 'direction', 'vehicle', 'reference', 'user', 'status']
     const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`
     const lines = [head.join(',')].concat(
       all.map(r =>
-        [r.scanned_at, r.code, r.product, r.direction, r.reference, r.user_label ?? r.user_email, r.status].map(esc).join(','),
+        [r.scanned_at, r.code, r.product, r.direction, vName(r), r.reference, r.user_label ?? r.user_email, r.status].map(esc).join(','),
       ),
     )
     const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' })
@@ -119,7 +126,8 @@ export default function HistoryScreen({ engine, orgId, settings, initialCode = '
   const pendingShown = pending.filter(
     p =>
       (!filters.code.trim() || p.code === filters.code.trim().toUpperCase()) &&
-      (!filters.direction || p.direction === filters.direction),
+      (!filters.direction || p.direction === filters.direction) &&
+      (!filters.vehicle || p.vehicle_id === filters.vehicle),
   )
 
   const hasFilters = Object.values(filters).some(v => String(v).trim())
@@ -205,6 +213,17 @@ export default function HistoryScreen({ engine, orgId, settings, initialCode = '
             </select>
           </label>
           <label>
+            Vehicle
+            <select value={filters.vehicle} onChange={e => setFilters({ ...filters, vehicle: e.target.value })} data-testid="history-vehicle">
+              <option value="">All</option>
+              {vehicles.map(v => (
+                <option key={v.id} value={v.id}>
+                  {v.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
             Reference
             <input placeholder="e.g. Van 2" value={filters.reference} onChange={e => setFilters({ ...filters, reference: e.target.value })} />
           </label>
@@ -220,7 +239,7 @@ export default function HistoryScreen({ engine, orgId, settings, initialCode = '
         {hasFilters && (
           <div className="row" style={{ padding: '10px 20px', borderBottom: '1px solid var(--border)', justifyContent: 'space-between' }}>
             <span className="muted small">Filtered results</span>
-            <button className="ghost btn-sm" onClick={() => setFilters({ code: '', direction: '', reference: '', from: '', to: '' })}>
+            <button className="ghost btn-sm" onClick={() => setFilters({ code: '', direction: '', reference: '', from: '', to: '', vehicle: '' })}>
               <Icon name="x" size={14} /> Clear filters
             </button>
           </div>
@@ -238,7 +257,7 @@ export default function HistoryScreen({ engine, orgId, settings, initialCode = '
                   <th>When</th>
                   <th>Unit</th>
                   <th>Movement</th>
-                  <th>Reference</th>
+                  <th>Vehicle / reference</th>
                   <th>By</th>
                 </tr>
               </thead>
@@ -252,7 +271,7 @@ export default function HistoryScreen({ engine, orgId, settings, initialCode = '
                     <td>
                       <Dir d={p.direction} /> <Badge tone="warn">waiting to sync</Badge>
                     </td>
-                    <td>{p.reference ?? ''}</td>
+                    <td><Where name={vName(p)} reference={p.reference} /></td>
                     <td className="muted small">this device</td>
                   </tr>
                 ))}
@@ -280,7 +299,7 @@ export default function HistoryScreen({ engine, orgId, settings, initialCode = '
                           </span>
                         )}
                       </td>
-                      <td>{r.reference ?? ''}</td>
+                      <td><Where name={vName(r)} reference={r.reference} /></td>
                       <td className="muted small">{r.user_label ?? r.user_email ?? ''}</td>
                     </tr>
                   ))
@@ -304,6 +323,20 @@ function Dir({ d }) {
     <span className={`dir ${d}`}>
       <Icon name={d === 'out' ? 'arrowUp' : 'arrowDown'} size={15} />
       {d === 'out' ? 'Out' : 'In'}
+    </span>
+  )
+}
+
+function Where({ name, reference }) {
+  if (!name && !reference) return null
+  return (
+    <span className="where">
+      {name && (
+        <span className="where-vehicle">
+          <Icon name="truck" size={14} /> {name}
+        </span>
+      )}
+      {reference && <span className="muted">{reference}</span>}
     </span>
   )
 }

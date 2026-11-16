@@ -120,6 +120,30 @@ test('out reference is cached for the Overview and cleared on check-in', async (
   assert.equal(u.last_ref, null)
 })
 
+test('vehicle: travels with the event, cached on the unit, cleared on check-in', async () => {
+  const { engine, server, db } = await setup()
+  server.online = false
+  await engine.recordMove({ orgId: ORG, code: 'AAAA1111', direction: 'out', vehicleId: 'veh-2' })
+  assert.equal((await db.get('units', 'u1')).vehicle_id, 'veh-2', 'offline: unit shows on the van at once')
+  server.online = true
+  await engine.flush()
+  const sent = server.calls.find(c => c.name === 'sync_events').args.p_events[0]
+  assert.equal(sent.vehicle_id, 'veh-2', 'vehicle sent to the server')
+  assert.equal((await engine.cachedHistory(ORG))[0].vehicle_id, 'veh-2')
+  await engine.recordMove({ orgId: ORG, code: 'AAAA1111', direction: 'in', vehicleId: 'veh-2' })
+  assert.equal((await db.get('units', 'u1')).vehicle_id, null, 'back in stock: no longer on the van')
+})
+
+test('vehicles are cached for offline van-label scans', async () => {
+  const { engine, server } = await setup()
+  const orig = server.rpc
+  server.rpc = async (n, a) => (n === 'pull_vehicles' ? { data: [{ id: 'veh-1', code: 'VEH-01', name: 'Van 1', active: true }], error: null, status: 200 } : orig(n, a))
+  await engine.pullVehicles(ORG)
+  server.online = false
+  assert.equal((await engine.listVehicles(ORG))[0].code, 'VEH-01')
+  server.rpc = orig
+})
+
 test('back online: outbox drains, history written, server status applied', async () => {
   const { engine, server, db } = await setup()
   server.online = false

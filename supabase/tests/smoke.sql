@@ -234,6 +234,43 @@ select pg_temp.check(pg_temp.fails(format('select add_unit_with_code(%L, %L)', :
 -- legacy random still works
 select pg_temp.check(length((select code from generate_units(:'prod_a', 1))) = 8, 'products without a stem keep random codes');
 
+
+-- ═══════════ vehicles ═══════════
+select pg_temp.as_user('aaaaaaaa-0000-0000-0000-000000000001') \gset
+insert into vehicles (org_id, name, plate) values (:'org_a', 'Van 1', ' abc123 ') returning id as van1, code as van1_code, plate as van1_plate \gset
+insert into vehicles (org_id, name) values (:'org_a', 'Van 2') returning id as van2, code as van2_code \gset
+select pg_temp.check(:'van1_code' = 'VEH-01' and :'van2_code' = 'VEH-02', 'vehicle codes auto VEH-01, VEH-02');
+select pg_temp.check(:'van1_plate' = 'ABC123', 'plate normalised');
+select pg_temp.check(pg_temp.fails(format('insert into vehicles (org_id, name) values (%L, %L)', :'org_a', 'van 1')), 'vehicle name unique');
+select pg_temp.check(pg_temp.fails(format('update vehicles set code = %L where id = %L', 'VEH-99', :'van1')), 'vehicle code frozen');
+select pg_temp.check(pg_temp.fails(format('select add_unit_with_code(%L, %L)', :'blo', 'VEH-05')), 'unit code cannot look like a vehicle');
+select pg_temp.check(pg_temp.fails(format('insert into products (org_id, name, code_stem) values (%L, %L, %L)', :'org_a', 'x', 'VEH')), 'code stem cannot be VEH');
+select code as vu1 from generate_units(:'ban45', 1) \gset
+select sync_events(jsonb_build_array(jsonb_build_object(
+  'kind','move','client_id',gen_random_uuid(),'org_id',:'org_a','code',:'vu1','direction','out','vehicle_id',:'van2'))) as r \gset
+select pg_temp.check((:'r'::jsonb)->0->>'result' = 'ok', 'check out onto a vehicle');
+select pg_temp.check((select e->>'vehicle_id' from jsonb_array_elements(pull_units(:'org_a')) e where e->>'code' = :'vu1') = :'van2', 'pull_units: vehicle of out unit');
+select pg_temp.check(movement_history(:'org_a', p_code => :'vu1')->0->>'vehicle' = 'Van 2', 'history shows vehicle');
+select pg_temp.check(jsonb_array_length(movement_history(:'org_a', p_vehicle => :'van2')) = 1, 'history filter by vehicle');
+select pg_temp.check(jsonb_array_length(pull_vehicles(:'org_a')) = 2, 'pull_vehicles');
+update vehicles set active = false where id = :'van1';
+select pg_temp.check((select not active from vehicles where id = :'van1'), 'vehicle deactivated (not deleted)');
+delete from vehicles where id = :'van1';
+select pg_temp.check((select count(*) from vehicles where id = :'van1') = 1, 'vehicles cannot be deleted');
+-- a PIN device (member) can use vehicles but not create or edit them
+reset role;
+insert into auth.users (id, is_anonymous) values ('eeeeeeee-0000-0000-0000-000000000005', true);
+set role authenticated;
+select pg_temp.as_user('eeeeeeee-0000-0000-0000-000000000005') \gset
+select pg_temp.check(join_with_pin('736251', 'Eva') = :'org_a'::uuid, 'staff device joins');
+select pg_temp.check(jsonb_array_length(pull_vehicles(:'org_a')) = 2, 'staff sees vehicles');
+select pg_temp.check(pg_temp.fails(format('insert into vehicles (org_id, name) values (%L, %L)', :'org_a', 'Staff van')), 'staff cannot create vehicles');
+update vehicles set name = 'Hacked' where id = :'van2';
+select pg_temp.check((select name from vehicles where id = :'van2') = 'Van 2', 'staff cannot rename vehicles');
+select sync_events(jsonb_build_array(jsonb_build_object(
+  'kind','move','client_id',gen_random_uuid(),'org_id',:'org_a','code',:'vu1','direction','in','vehicle_id',:'van2'))) as r \gset
+select pg_temp.check((:'r'::jsonb)->0->>'result' = 'ok', 'staff checks in from a vehicle');
+
 -- ═══════════ user B attacks org A ═══════════
 select pg_temp.as_user('bbbbbbbb-0000-0000-0000-000000000002') \gset
 select pg_temp.check((select count(*) from orgs) = 0, 'B sees no orgs');
@@ -264,6 +301,13 @@ select pg_temp.check(pg_temp.fails(format('insert into products (org_id, name, c
 select pg_temp.check((select count(*) from themes) = 0, 'B sees no themes of A');
 select pg_temp.check(pg_temp.fails(format('select add_unit_with_code(%L, %L)', :'ban45', 'EVIL-1')), 'B cannot add units to A');
 select pg_temp.check(pg_temp.fails(format('select next_codes(%L)', :'ban45')), 'B cannot preview A codes');
+select pg_temp.check(pg_temp.fails(format('select pull_vehicles(%L)', :'org_a')), 'B cannot list A vehicles');
+select pg_temp.check((select count(*) from vehicles) = 0, 'B sees no vehicles of A');
+insert into products (org_id, name) values (:'org_b', 'B thing') returning id as b_prod \gset
+select code as b_unit from generate_units(:'b_prod', 1) \gset
+select sync_events(jsonb_build_array(jsonb_build_object(
+  'kind','move','client_id',gen_random_uuid(),'org_id',:'org_b','code',:'b_unit','direction','out','vehicle_id',:'van2'))) as r \gset
+select pg_temp.check((:'r'::jsonb)->0->>'result' = 'error', 'B cannot put its units on A vehicle');
 select pg_temp.check(pg_temp.fails(format('insert into movements (org_id, unit_id, direction) values (%L, gen_random_uuid(), %L)', :'org_b', 'in')), 'no direct movement inserts');
 select pg_temp.check(pg_temp.fails(format('select _sync_move(%L::jsonb)', jsonb_build_object('client_id', gen_random_uuid(), 'org_id', :'org_b', 'code', 'X', 'direction', 'in'))), 'internal _sync_move not callable');
 select pg_temp.check(pg_temp.fails('select gen_unit_code()'), 'internal gen_unit_code not callable');

@@ -251,6 +251,7 @@ export default function App() {
       {active === 'inventory' && <ProductsScreen engine={engine} orgId={orgId} onShowHistory={showHistory} />}
       {active === 'settings' && (
         <SettingsScreen
+          engine={engine}
           settings={settings}
           onChange={updateSettings}
           isOwner={isOwner}

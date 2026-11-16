@@ -8,6 +8,7 @@ import { PageHeader, Section, Stat, EmptyState, Badge, timeAgo } from './ui/ui.j
 export default function OverviewScreen({ engine, orgId, go, onShowHistory }) {
   const sync = useSyncExternalStore(engine.subscribe, engine.getState)
   const [units, setUnits] = useState(null)
+  const [vehicles, setVehicles] = useState([])
   const [recent, setRecent] = useState([])
   const [pending, setPending] = useState([])
   const [attention, setAttention] = useState(0)
@@ -16,12 +17,14 @@ export default function OverviewScreen({ engine, orgId, go, onShowHistory }) {
     let alive = true
     Promise.all([
       engine.listUnits(orgId),
+      engine.listVehicles(orgId),
       engine.cachedHistory(orgId),
       engine.pendingEvents(orgId, 'move'),
       engine.listAttention(orgId),
-    ]).then(([u, h, p, a]) => {
+    ]).then(([u, v, h, p, a]) => {
       if (!alive) return
       setUnits(u)
+      setVehicles(v)
       setRecent(h.slice(0, 8))
       setPending(p)
       setAttention(a.length)
@@ -51,18 +54,23 @@ export default function OverviewScreen({ engine, orgId, go, onShowHistory }) {
     const groups = new Map()
     for (const u of units ?? []) {
       if (u.status !== 'out') continue
-      const key = u.last_ref?.trim() || ''
+      // A registered vehicle wins over the free-text reference.
+      const key = u.vehicle_id ? `veh:${u.vehicle_id}` : u.last_ref?.trim() || ''
       if (!groups.has(key)) groups.set(key, [])
       groups.get(key).push(u)
     }
+    const vById = Object.fromEntries(vehicles.map(v => [v.id, v]))
     return [...groups.entries()]
-      .map(([ref, list]) => ({
-        ref,
+      .map(([key, list]) => ({
+        key,
+        vehicle: key.startsWith('veh:') ? vById[key.slice(4)] ?? { name: 'Vehicle' } : null,
+        ref: key.startsWith('veh:') ? '' : key,
+        refs: [...new Set(list.map(u => u.last_ref).filter(Boolean))],
         list: list.sort((a, b) => (a.out_since || '').localeCompare(b.out_since || '')),
         since: list.reduce((m, u) => (u.out_since && (!m || u.out_since < m) ? u.out_since : m), null),
       }))
       .sort((a, b) => b.list.length - a.list.length)
-  }, [units])
+  }, [units, vehicles])
 
   const today = new Date().toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' })
 
@@ -143,11 +151,18 @@ export default function OverviewScreen({ engine, orgId, go, onShowHistory }) {
             </EmptyState>
           ) : (
             outGroups.map(g => (
-              <div className="ref-group" key={g.ref || '—'}>
+              <div className="ref-group" key={g.key || '—'} data-testid="out-group">
                 <div className="ref-head">
                   <div className="ref-name">
                     <Icon name="truck" />
-                    {g.ref || <span className="muted">No reference</span>}
+                    {g.vehicle ? (
+                      <>
+                        {g.vehicle.name}
+                        {g.vehicle.plate && <span className="muted small mono">{g.vehicle.plate}</span>}
+                      </>
+                    ) : (
+                      g.ref || <span className="muted">No vehicle or reference</span>
+                    )}
                     <Badge tone="warn">{g.list.length}</Badge>
                   </div>
                   <span className="muted small">{g.since ? `since ${timeAgo(g.since)}` : ''}</span>

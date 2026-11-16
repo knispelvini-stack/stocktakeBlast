@@ -7,8 +7,8 @@ import { PageHeader, Section, Stat, EmptyState } from './ui/ui.jsx'
 
 const STATUS_LABEL = { in_stock: 'in stock', out: 'out', lost: 'lost', retired: 'retired' }
 
-function entryFor(r, direction) {
-  const verb = direction === 'out' ? 'Checked out' : 'Checked in'
+function entryFor(r, direction, vehicle) {
+  const verb = direction === 'out' ? (vehicle ? `On ${vehicle.name}` : 'Checked out') : 'Checked in'
   switch (r.result) {
     case 'ok':
       return makeEntry('ok', r.code, `${verb}: ${r.product}`, r.previous === 'lost' ? '(was marked lost — found!)' : '')
@@ -29,6 +29,16 @@ export default function MoveScreen({ engine, orgId, settings }) {
   const [reference, setReference] = useState('')
   const [feed, setFeed] = useState([])
   const [counts, setCounts] = useState({ ok: 0, problems: 0 })
+  const [vehicles, setVehicles] = useState([])
+  const [vehicleId, setVehicleId] = useState('')
+  const [units, setUnits] = useState([])
+
+  // Vehicles + units come from the local cache, so van labels scan offline too.
+  useEffect(() => {
+    engine.listVehicles(orgId).then(setVehicles)
+    engine.listUnits(orgId).then(setUnits)
+  }, [engine, orgId, sync.version])
+  const vehicle = vehicles.find(v => v.id === vehicleId)
 
   // When the server's answer differs from what we showed, update that line.
   useEffect(
@@ -55,13 +65,27 @@ export default function MoveScreen({ engine, orgId, settings }) {
     [engine],
   )
 
+  function push(entry) {
+    setFeed(f => [entry, ...f].slice(0, 50))
+    beep(entry.kind, settings.sound)
+  }
+
   async function handleScan(code) {
+    // A vehicle label selects the vehicle; it is not a movement.
+    if (code.startsWith('VEH-')) {
+      const v = vehicles.find(x => x.code === code)
+      if (!v) return push(makeEntry('error', code, 'Unknown vehicle', 'not registered (or this device has not synced yet)'))
+      if (!v.active) return push(makeEntry('error', code, `${v.name} is inactive`, 'reactivate it in Settings → Vehicles'))
+      setVehicleId(v.id)
+      return push(
+        makeEntry('ok', code, `${direction === 'out' ? 'Loading' : 'Unloading'} ${v.name}`, 'now scan the items'),
+      )
+    }
     try {
-      const r = await engine.recordMove({ orgId, code, direction, reference })
-      const entry = { ...entryFor(r, direction), clientId: r.client_id }
-      setFeed(f => [entry, ...f].slice(0, 50))
+      const r = await engine.recordMove({ orgId, code, direction, reference, vehicleId: vehicleId || null })
+      const entry = { ...entryFor(r, direction, vehicle), clientId: r.client_id }
+      push(entry)
       setCounts(c => (entry.kind === 'ok' ? { ...c, ok: c.ok + 1 } : { ...c, problems: c.problems + 1 }))
-      beep(entry.kind, settings.sound)
     } catch (e) {
       // IndexedDB failure (storage full / blocked) — the only way a scan can be lost.
       setFeed(f => [makeEntry('error', code, 'NOT SAVED', e.message), ...f].slice(0, 50))
@@ -108,10 +132,24 @@ export default function MoveScreen({ engine, orgId, settings }) {
             </button>
           </div>
           <label>
-            Reference {direction === 'out' ? '' : '(optional)'}
+            Vehicle <span className="hint">scan the van’s label, or pick it</span>
+            <select value={vehicleId} onChange={e => setVehicleId(e.target.value)} data-testid="move-vehicle">
+              <option value="">No vehicle</option>
+              {vehicles
+                .filter(v => v.active || v.id === vehicleId)
+                .map(v => (
+                  <option key={v.id} value={v.id}>
+                    {v.name}
+                    {v.plate ? ` · ${v.plate}` : ''}
+                  </option>
+                ))}
+            </select>
+          </label>
+          <label>
+            Reference <span className="hint">optional — e.g. job or customer</span>
             <input
               list="move-refs"
-              placeholder="e.g. Van 2 · Job 1043"
+              placeholder="e.g. Job 1043 · Smith party"
               value={reference}
               onChange={e => setReference(e.target.value)}
               onKeyDown={e => e.key === 'Enter' && e.currentTarget.blur()}
@@ -121,13 +159,14 @@ export default function MoveScreen({ engine, orgId, settings }) {
                 <option key={r} value={r} />
               ))}
             </datalist>
-            <span className="hint">Where the items are going — shown on the Overview under “Out right now”.</span>
           </label>
 
           <ScanFlash entry={feed[0]} idle={direction === 'out' ? 'Ready to check OUT' : 'Ready to check IN'} />
           <ScanInput onScan={handleScan} />
         </div>
 
+        <div className="stack">
+        {vehicle && <VehicleLoad vehicle={vehicle} units={units} direction={direction} />}
         <Section flush title="This session" description="Scans on this device since you opened this screen">
           <div className="session-stats" style={{ padding: '16px 16px 0' }}>
             <Stat label="Moved" value={counts.ok} tone={counts.ok ? 'ok' : ''} />
@@ -143,7 +182,47 @@ export default function MoveScreen({ engine, orgId, settings }) {
             )}
           </div>
         </Section>
+        </div>
       </div>
     </>
+  )
+}
+
+// What's on the selected vehicle right now. Loading: what's on board.
+// Unloading: what still has to come back off it.
+function VehicleLoad({ vehicle, units, direction }) {
+  const on = units.filter(u => u.status === 'out' && u.vehicle_id === vehicle.id).sort((a, b) => a.code.localeCompare(b.code))
+  const byProduct = on.reduce((m, u) => ((m[u.product] ??= []).push(u), m), {})
+  return (
+    <Section
+      flush
+      title={
+        <span className="row" style={{ gap: 8 }}>
+          <Icon name="truck" /> {direction === 'out' ? `On ${vehicle.name} now` : `Still out with ${vehicle.name}`} ({on.length})
+        </span>
+      }
+      description={direction === 'out' ? 'Everything checked out on this vehicle and not back yet' : 'Scan each one as it comes off. What’s left here didn’t come back.'}
+    >
+      <div data-testid="vehicle-load">
+        {on.length === 0 ? (
+          <EmptyState icon="check" title={direction === 'out' ? 'Nothing loaded yet' : 'Everything is back'} />
+        ) : (
+          <div style={{ padding: '14px 20px' }}>
+            {Object.entries(byProduct).map(([product, list]) => (
+              <div className="group" key={product}>
+                <div className="group-title">
+                  {product} <span className="muted">× {list.length}</span>
+                </div>
+                <div className="codes">
+                  {list.map(u => (
+                    <code key={u.id}>{u.code}</code>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </Section>
   )
 }

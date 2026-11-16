@@ -49,6 +49,7 @@ async function scan(page, code) {
   await page.waitForSelector('[data-section="scanner"]')
   assert.equal(await page.locator('[data-section="access"]').count(), 0, 'staff has no PIN & devices settings')
   assert.equal(await page.locator('[data-section="company"]').count(), 0, 'staff has no company settings')
+  assert.equal(await page.locator('[data-section="vehicles"]').count(), 0, 'staff has no vehicle settings')
   await page.click('[data-nav="move"]')
   await page.waitForSelector('text=Ready to check OUT')
   step('right PIN: device joins, lands on scanning, no owner settings')
