@@ -203,7 +203,8 @@ export default function HistoryScreen({ engine, orgId, settings, initialCode = '
         </div>
       )}
 
-      <table className="table">
+      <div className="table-wrap">
+      <table className="table history-table">
         <thead>
           <tr>
             <th>When</th>
@@ -264,6 +265,7 @@ export default function HistoryScreen({ engine, orgId, settings, initialCode = '
           )}
         </tbody>
       </table>
+      </div>
       {hasMore && (
         <button className="ghost" onClick={loadMore} disabled={loadingMore}>
           {loadingMore ? 'Loading…' : 'Load more'}

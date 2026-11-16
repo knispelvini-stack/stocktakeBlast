@@ -14,7 +14,7 @@ import SyncBadge from './components/SyncBadge.jsx'
 
 const TABS = [
   { id: 'move', label: 'Check out / in' },
-  { id: 'count', label: 'Stocktake' },
+  { id: 'count', label: 'Stock\u00ADtake' }, // soft hyphen: breaks only on narrow phones
   { id: 'history', label: 'History' },
   { id: 'products', label: 'Products & labels' },
   { id: 'settings', label: 'Scanner' },

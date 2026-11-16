@@ -66,6 +66,58 @@ http
       }
       return
     }
+    // Minimal PostgREST table reads: ?select=a,b&col=eq.v&order=c.desc,d&limit=n
+    // (enough for the Products screen). Runs as `authenticated`, so RLS applies.
+    const t = req.url.match(/^\/rest\/v1\/(\w+)\?(.*)$/)
+    if (t && req.method === 'GET') {
+      const params = new URLSearchParams(t[2])
+      const ident = x => {
+        if (!/^\w+$/.test(x)) throw new Error('bad identifier ' + x)
+        return `"${x}"`
+      }
+      const client = await pool.connect()
+      try {
+        const sel = (params.get('select') || '*').split(',').map(c => (c === '*' ? '*' : ident(c))).join(', ')
+        const where = []
+        const vals = []
+        for (const [k, v] of params) {
+          if (['select', 'order', 'limit', 'offset'].includes(k)) continue
+          const m = v.match(/^eq\.(.*)$/)
+          if (m) {
+            vals.push(m[1])
+            where.push(`${ident(k)} = $${vals.length}`)
+          }
+        }
+        const order = (params.get('order') || '')
+          .split(',')
+          .filter(Boolean)
+          .map(o => {
+            const [c, d] = o.split('.')
+            return `${ident(c)} ${d === 'desc' ? 'desc' : 'asc'}`
+          })
+          .join(', ')
+        const sql =
+          `select coalesce(jsonb_agg(x), '[]') as r from (select ${sel} from public.${ident(t[1])}` +
+          (where.length ? ` where ${where.join(' and ')}` : '') +
+          (order ? ` order by ${order}` : '') +
+          (params.get('limit') ? ` limit ${parseInt(params.get('limit'), 10)}` : '') +
+          `) x`
+        await client.query('begin')
+        await client.query('set local role authenticated')
+        await client.query(`select set_config('request.jwt.claim.sub', $1, true)`, [sub(req) || ''])
+        const { rows } = await client.query(sql, vals)
+        await client.query('commit')
+        res.setHeader('Content-Type', 'application/json')
+        return res.end(JSON.stringify(rows[0].r))
+      } catch (e) {
+        await client.query('rollback').catch(() => {})
+        res.statusCode = 400
+        res.setHeader('Content-Type', 'application/json')
+        return res.end(JSON.stringify({ code: e.code || 'XX000', message: e.message }))
+      } finally {
+        client.release()
+      }
+    }
     // Anonymous sign-in (supabase.auth.signInAnonymously → POST /auth/v1/signup).
     if (req.url.startsWith('/auth/v1/signup') && req.method === 'POST') {
       const id = require('crypto').randomUUID()

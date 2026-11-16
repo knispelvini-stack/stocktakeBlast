@@ -198,6 +198,45 @@ button:disabled { opacity: 0.45; cursor: default; }
 .sheet-thermal .label { width: 50mm; height: 25mm; outline: 1px dashed var(--rule); padding: 1mm 2mm; }
 .sheet-thermal .label-product { font-size: 8pt; }
 
+/* ───────── responsive tables ───────── */
+.table-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; border-radius: var(--radius); }
+.table-wrap > .table { min-width: 100%; }
+.labels-screen select { max-width: 100%; }
+.show-sm { display: none; }
+@media (max-width: 640px) {
+  .show-sm { display: inline-block; margin-left: 6px; }
+}
+/* very narrow phones: 6 tabs must not run into each other */
+@media (max-width: 360px) {
+  .app .tabs button { font-size: 10.5px; letter-spacing: -0.01em; padding-left: 1px; padding-right: 1px; }
+}
+.print-area { overflow-x: auto; }
+
+@media (max-width: 640px) {
+  .hide-sm { display: none; }
+  .table th, .table td { padding: 10px; }
+
+  /* History as stacked cards: unit / movement + time / reference + who */
+  .history-table thead { display: none; }
+  .history-table, .history-table tbody { display: block; }
+  .history-table tr {
+    display: grid; grid-template-columns: 1fr auto; column-gap: 10px; row-gap: 2px;
+    padding: 12px 14px; border-top: 1px solid var(--rule);
+  }
+  .history-table tbody tr:first-child { border-top: 0; }
+  .history-table td { border: 0; padding: 0; min-width: 0; overflow-wrap: anywhere; }
+  .history-table td:nth-child(2) { grid-column: 1 / -1; grid-row: 1; font-size: 15px; }
+  .history-table td:nth-child(3) { grid-column: 1; grid-row: 2; }
+  .history-table td:nth-child(1) { grid-column: 2; grid-row: 2; font-size: 12px; color: var(--mute); text-align: right; }
+  .history-table td:nth-child(4) { grid-column: 1; grid-row: 3; font-size: 13px; }
+  .history-table td:nth-child(5) { grid-column: 2; grid-row: 3; text-align: right; }
+  .history-table td[colspan] { grid-column: 1 / -1; grid-row: auto; }
+}
+
+@media print {
+  .print-area { overflow: visible; }
+}
+
 @media print {
   body { background: #fff; }
   .topbar, .tabs, .no-print { display: none !important; }
@@ -209,7 +248,6 @@ button:disabled { opacity: 0.45; cursor: default; }
 }
 
 @media (max-width: 640px) {
-  .table th:nth-child(4), .table td:nth-child(4) { display: none; }
   .segmented button { padding: 12px 14px; font-size: 15px; }
 }
 

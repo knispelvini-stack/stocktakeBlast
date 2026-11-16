@@ -90,6 +90,7 @@ export default function ProductsScreen({ engine, orgId, onShowHistory }) {
       ) : (
         <>
           <input placeholder="Search products…" value={query} onChange={e => setQuery(e.target.value)} />
+          <div className="table-wrap">
           <table className="table">
             <thead>
               <tr>
@@ -115,6 +116,7 @@ export default function ProductsScreen({ engine, orgId, onShowHistory }) {
               ))}
             </tbody>
           </table>
+          </div>
         </>
       )}
     </div>
@@ -222,13 +224,14 @@ function ProductDetail({ engine, orgId, product, onBack, onShowHistory }) {
       ) : visible.length === 0 ? (
         <p className="muted">No units yet. Generate one label per physical item.</p>
       ) : (
+        <div className="table-wrap">
         <table className="table">
           <thead>
             <tr>
               <th />
               <th>Code</th>
               <th>Status</th>
-              <th>Last moved</th>
+              <th className="hide-sm">Last moved</th>
               <th />
             </tr>
           </thead>
@@ -246,7 +249,7 @@ function ProductDetail({ engine, orgId, product, onBack, onShowHistory }) {
                 <td>
                   <span className={`pill ${u.status}`}>{u.status.replace('_', ' ')}</span>
                 </td>
-                <td className="muted small">{u.last_moved_at ? new Date(u.last_moved_at).toLocaleString() : '—'}</td>
+                <td className="muted small hide-sm">{u.last_moved_at ? new Date(u.last_moved_at).toLocaleString() : '—'}</td>
                 <td className="num">
                   {u.status === 'retired' ? (
                     <button className="link" onClick={() => setStatus(u, 'in_stock')}>
@@ -265,6 +268,7 @@ function ProductDetail({ engine, orgId, product, onBack, onShowHistory }) {
             ))}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   )

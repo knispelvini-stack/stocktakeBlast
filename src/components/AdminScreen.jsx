@@ -134,12 +134,13 @@ export default function AdminScreen({ orgId, orgName, onRenamed }) {
         {devices === null ? (
           <p className="muted">Loading…</p>
         ) : (
+          <div className="table-wrap">
           <table className="table">
             <thead>
               <tr>
                 <th>Name</th>
-                <th>Type</th>
-                <th>Last active</th>
+                <th className="hide-sm">Type</th>
+                <th className="hide-sm">Last active</th>
                 <th />
               </tr>
             </thead>
@@ -148,10 +149,11 @@ export default function AdminScreen({ orgId, orgName, onRenamed }) {
                 <tr key={d.user_id}>
                   <td>
                     <strong>{d.name}</strong>
+                    {d.role === 'owner' && <span className="pill show-sm"> owner</span>}
                     {d.email && d.email !== d.name && <span className="muted small"> · {d.email}</span>}
                   </td>
-                  <td>{d.role === 'owner' ? <span className="pill">owner</span> : 'PIN device'}</td>
-                  <td className="muted small">
+                  <td className="hide-sm">{d.role === 'owner' ? <span className="pill">owner</span> : 'PIN device'}</td>
+                  <td className="muted small hide-sm">
                     {d.last_seen_at ? new Date(d.last_seen_at).toLocaleString() : new Date(d.joined_at).toLocaleString()}
                   </td>
                   <td className="num">
@@ -165,6 +167,7 @@ export default function AdminScreen({ orgId, orgName, onRenamed }) {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </div>
