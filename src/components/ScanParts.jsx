@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import Icon from './ui/Icon.jsx'
 
 // Fallback/manual entry. A scanner typing into this field also works:
 // its trailing Enter submits the form.
@@ -83,7 +84,16 @@ export function ScanFeed({ entries }) {
           <span className="feed-title">{e.title}</span>
           <span className="muted">{e.detail}</span>
           <span className="muted time">
-            {e.clientId && (e.synced ? <span title="Confirmed by server">☁︎ </span> : <span title="Saved on this device, waiting to sync">⏳ </span>)}
+            {e.clientId &&
+              (e.synced ? (
+                <span className="sync-mark ok" title="Confirmed by server">
+                  <Icon name="check" size={13} /> synced
+                </span>
+              ) : (
+                <span className="sync-mark" title="Saved on this device, waiting to sync">
+                  <Icon name="clock" size={13} /> pending
+                </span>
+              ))}
             {e.time}
           </span>
         </li>

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 import { supabase } from '../lib/supabase.js'
 import { useScanner } from '../lib/useScanner.js'
+import Icon from './ui/Icon.jsx'
+import { PageHeader, Section, EmptyState, Badge, useUI, formatDateTime } from './ui/ui.jsx'
 
 const PAGE = 100
 const RESULT_TEXT = {
@@ -24,6 +26,7 @@ function toIsoEndExclusive(d) {
 }
 
 export default function HistoryScreen({ engine, orgId, settings, initialCode = '' }) {
+  const ui = useUI()
   const sync = useSyncExternalStore(engine.subscribe, engine.getState)
   const [filters, setFilters] = useState({ code: initialCode, direction: '', reference: '', from: '', to: '' })
   const [rows, setRows] = useState(null)
@@ -87,7 +90,7 @@ export default function HistoryScreen({ engine, orgId, settings, initialCode = '
     setLoadingMore(true)
     const { data, error } = await supabase.rpc('movement_history', params(rows[rows.length - 1]))
     setLoadingMore(false)
-    if (error) return alert(error.message)
+    if (error) return ui.toast(error.message, 'error')
     setRows(r => [...r, ...data])
     setHasMore(data.length === PAGE)
     engine.cacheHistory(orgId, data)
@@ -119,162 +122,188 @@ export default function HistoryScreen({ engine, orgId, settings, initialCode = '
       (!filters.direction || p.direction === filters.direction),
   )
 
+  const hasFilters = Object.values(filters).some(v => String(v).trim())
+
   return (
-    <div className="stack">
+    <>
+      <PageHeader
+        title="Activity"
+        description="Every check-out and check-in, with who did it and where it went. Scan a label here to filter by it."
+        actions={
+          <button className="secondary" onClick={exportCsv} disabled={!rows?.length && !pending.length}>
+            <Icon name="download" /> Export CSV
+          </button>
+        }
+      />
+
       {attention.length > 0 && (
-        <div className="card attention">
-          <h3>⚠ Needs attention ({attention.length})</h3>
-          <p className="muted small">
-            These scans were saved on a device and, when they synced, the server decided differently than the screen showed
-            at the time.
-          </p>
+        <Section
+          flush
+          title={
+            <span className="row" style={{ gap: 8 }}>
+              <Icon name="alert" /> Needs attention ({attention.length})
+            </span>
+          }
+          description="Saved on a device while offline; when they synced, the server decided differently than the screen showed."
+        >
           <ul className="att-list">
             {attention.map(a => (
               <li key={a.id}>
                 <div>
                   <code>{a.code ?? '—'}</code> {a.product && <strong>{a.product}</strong>}{' '}
                   <span className="muted small">
-                    {a.kind === 'move' ? (a.direction === 'out' ? '↑ out' : '↓ in') : a.kind} ·{' '}
-                    {new Date(a.scanned_at).toLocaleString()}
+                    {a.kind === 'move' ? (a.direction === 'out' ? 'check-out' : 'check-in') : a.kind} ·{' '}
+                    {formatDateTime(a.scanned_at)}
                   </span>
-                  <div className="small">
+                  <div className="small muted">
                     {RESULT_TEXT[a.result] ?? a.result}
                     {a.message ? `: ${a.message}` : ''}
                   </div>
                 </div>
                 <div className="row">
                   {a.code && (
-                    <button className="link" onClick={() => setFilters(f => ({ ...f, code: a.code }))}>
+                    <button className="ghost small-btn" onClick={() => setFilters(f => ({ ...f, code: a.code }))}>
                       Unit history
                     </button>
                   )}
-                  <button className="ghost small-btn" onClick={() => engine.dismissAttention(a.id)}>
+                  <button className="secondary small-btn" onClick={() => engine.dismissAttention(a.id)}>
                     Dismiss
                   </button>
                 </div>
               </li>
             ))}
           </ul>
-        </div>
+        </Section>
       )}
-
-      <div className="card filters">
-        <label>
-          Unit code
-          <input
-            placeholder="Scan or type"
-            value={filters.code}
-            onChange={e => setFilters({ ...filters, code: e.target.value.toUpperCase() })}
-          />
-        </label>
-        <label>
-          Direction
-          <select value={filters.direction} onChange={e => setFilters({ ...filters, direction: e.target.value })}>
-            <option value="">Both</option>
-            <option value="out">Out</option>
-            <option value="in">In</option>
-          </select>
-        </label>
-        <label>
-          Reference
-          <input value={filters.reference} onChange={e => setFilters({ ...filters, reference: e.target.value })} />
-        </label>
-        <label>
-          From
-          <input type="date" value={filters.from} onChange={e => setFilters({ ...filters, from: e.target.value })} />
-        </label>
-        <label>
-          To
-          <input type="date" value={filters.to} onChange={e => setFilters({ ...filters, to: e.target.value })} />
-        </label>
-        <div className="row filter-actions">
-          <button className="ghost" onClick={() => setFilters({ code: '', direction: '', reference: '', from: '', to: '' })}>
-            Clear
-          </button>
-          <button className="secondary" onClick={exportCsv} disabled={!rows?.length && !pending.length}>
-            Export CSV
-          </button>
-        </div>
-      </div>
 
       {source === 'cache' && (
         <div className="notice offline">
-          Offline — showing the {rows?.length ?? 0} movements stored on this device. Connect to see the full history.
+          <Icon name="wifiOff" />
+          <div>Offline — showing the {rows?.length ?? 0} movements stored on this device. Connect to see the full history.</div>
         </div>
       )}
 
-      <div className="table-wrap">
-      <table className="table history-table">
-        <thead>
-          <tr>
-            <th>When</th>
-            <th>Unit</th>
-            <th>Movement</th>
-            <th>Reference</th>
-            <th>By</th>
-          </tr>
-        </thead>
-        <tbody>
-          {pendingShown.map(p => (
-            <tr key={p.client_id} className="pending-row">
-              <td>{new Date(p.scanned_at).toLocaleString()}</td>
-              <td>
-                <code>{p.code}</code> <span className="muted small">{p.product ?? ''}</span>
-              </td>
-              <td>
-                <Dir d={p.direction} /> <span className="pill pending">⏳ waiting to sync</span>
-              </td>
-              <td>{p.reference ?? ''}</td>
-              <td className="muted small">this device</td>
-            </tr>
-          ))}
-          {rows === null ? (
-            <tr>
-              <td colSpan={5} className="muted">
-                Loading…
-              </td>
-            </tr>
-          ) : rows.length === 0 && pendingShown.length === 0 ? (
-            <tr>
-              <td colSpan={5} className="muted">
-                No movements match.
-              </td>
-            </tr>
-          ) : (
-            rows.map(r => (
-              <tr key={r.id} className={r.applied ? '' : 'late-row'}>
-                <td>{new Date(r.scanned_at).toLocaleString()}</td>
-                <td>
-                  <button className="link mono" onClick={() => setFilters(f => ({ ...f, code: r.code }))}>
-                    {r.code}
-                  </button>{' '}
-                  <span className="muted small">{r.product}</span>
-                </td>
-                <td>
-                  <Dir d={r.direction} />
-                  {!r.applied && (
-                    <span className="pill lost" title={RESULT_TEXT.late}>
-                      not applied
-                    </span>
-                  )}
-                </td>
-                <td>{r.reference ?? ''}</td>
-                <td className="muted small">{r.user_label ?? r.user_email ?? ''}</td>
-              </tr>
-            ))
-          )}
-        </tbody>
-      </table>
-      </div>
+      <section className="panel flush">
+        <div className="filters">
+          <label>
+            Unit code
+            <div className="input-icon">
+              <Icon name="barcode" size={16} />
+              <input
+                placeholder="Scan or type"
+                value={filters.code}
+                onChange={e => setFilters({ ...filters, code: e.target.value.toUpperCase() })}
+              />
+            </div>
+          </label>
+          <label>
+            Direction
+            <select value={filters.direction} onChange={e => setFilters({ ...filters, direction: e.target.value })}>
+              <option value="">Out and in</option>
+              <option value="out">Check-outs</option>
+              <option value="in">Check-ins</option>
+            </select>
+          </label>
+          <label>
+            Reference
+            <input placeholder="e.g. Van 2" value={filters.reference} onChange={e => setFilters({ ...filters, reference: e.target.value })} />
+          </label>
+          <label>
+            From
+            <input type="date" value={filters.from} onChange={e => setFilters({ ...filters, from: e.target.value })} />
+          </label>
+          <label>
+            To
+            <input type="date" value={filters.to} onChange={e => setFilters({ ...filters, to: e.target.value })} />
+          </label>
+        </div>
+        {hasFilters && (
+          <div className="row" style={{ padding: '10px 20px', borderBottom: '1px solid var(--border)', justifyContent: 'space-between' }}>
+            <span className="muted small">Filtered results</span>
+            <button className="ghost btn-sm" onClick={() => setFilters({ code: '', direction: '', reference: '', from: '', to: '' })}>
+              <Icon name="x" size={14} /> Clear filters
+            </button>
+          </div>
+        )}
+
+        {rows !== null && rows.length === 0 && pendingShown.length === 0 ? (
+          <EmptyState icon="activity" title={hasFilters ? 'No movements match' : 'No movements yet'}>
+            {hasFilters ? 'Try clearing a filter.' : 'Check-outs and check-ins appear here as soon as they’re scanned.'}
+          </EmptyState>
+        ) : (
+          <div className="table-wrap">
+            <table className="table history-table">
+              <thead>
+                <tr>
+                  <th>When</th>
+                  <th>Unit</th>
+                  <th>Movement</th>
+                  <th>Reference</th>
+                  <th>By</th>
+                </tr>
+              </thead>
+              <tbody>
+                {pendingShown.map(p => (
+                  <tr key={p.client_id} className="pending-row">
+                    <td className="muted">{formatDateTime(p.scanned_at)}</td>
+                    <td>
+                      <code>{p.code}</code> <span className="muted small">{p.product ?? ''}</span>
+                    </td>
+                    <td>
+                      <Dir d={p.direction} /> <Badge tone="warn">waiting to sync</Badge>
+                    </td>
+                    <td>{p.reference ?? ''}</td>
+                    <td className="muted small">this device</td>
+                  </tr>
+                ))}
+                {rows === null ? (
+                  <tr>
+                    <td colSpan={5} className="muted">
+                      Loading…
+                    </td>
+                  </tr>
+                ) : (
+                  rows.map(r => (
+                    <tr key={r.id} className={r.applied ? '' : 'late-row'}>
+                      <td className="muted">{formatDateTime(r.scanned_at)}</td>
+                      <td>
+                        <button className="link mono" onClick={() => setFilters(f => ({ ...f, code: r.code }))}>
+                          {r.code}
+                        </button>{' '}
+                        <span className="muted small">{r.product}</span>
+                      </td>
+                      <td>
+                        <Dir d={r.direction} />
+                        {!r.applied && (
+                          <span title={RESULT_TEXT.late}>
+                            <Badge tone="error">not applied</Badge>
+                          </span>
+                        )}
+                      </td>
+                      <td>{r.reference ?? ''}</td>
+                      <td className="muted small">{r.user_label ?? r.user_email ?? ''}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
       {hasMore && (
-        <button className="ghost" onClick={loadMore} disabled={loadingMore}>
+        <button className="secondary" onClick={loadMore} disabled={loadingMore} style={{ alignSelf: 'center' }}>
           {loadingMore ? 'Loading…' : 'Load more'}
         </button>
       )}
-    </div>
+    </>
   )
 }
 
 function Dir({ d }) {
-  return <span className={`dir ${d}`}>{d === 'out' ? '↑ Out' : '↓ In'}</span>
+  return (
+    <span className={`dir ${d}`}>
+      <Icon name={d === 'out' ? 'arrowUp' : 'arrowDown'} size={15} />
+      {d === 'out' ? 'Out' : 'In'}
+    </span>
+  )
 }

@@ -23,5 +23,11 @@ read by keyboard-wedge (HID) USB/Bluetooth scanners. See README.md for the full 
   `join_with_pin()`. So `authenticated` means "anyone who can reach the API": every RPC must check
   `is_member()` (or `_require_owner()` for admin actions); never grant something to
   `authenticated` assuming it implies a real account.
-- No React Router — tab state in `App.jsx`.
+- No React Router — tab state in `App.jsx`. Navigation (`NAV` in App.jsx): Overview, Check out / in,
+  Stocktake, Inventory, Activity; everything else lives in Settings (gear). Add screens there, not
+  as new top-level tabs.
+- UI: use the primitives in `src/components/ui/` (PageHeader, Section, Stat, EmptyState, Modal,
+  Badge, Icon) and `useUI()` for `toast()` / `confirm()`. Never `window.alert` / `window.confirm`.
+- Every screen must pass the responsive audit (320–1440px, no page-level horizontal scroll,
+  ≥40px tap targets on touch layouts).
 - After clicking buttons on scan screens, blur them, so a scanner's Enter can't re-trigger them.

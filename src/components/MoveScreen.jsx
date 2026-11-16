@@ -2,6 +2,8 @@ import { useEffect, useState, useSyncExternalStore } from 'react'
 import { useScanner } from '../lib/useScanner.js'
 import { beep } from '../lib/beep.js'
 import { ScanInput, ScanFlash, ScanFeed, makeEntry } from './ScanParts.jsx'
+import Icon from './ui/Icon.jsx'
+import { PageHeader, Section, Stat, EmptyState } from './ui/ui.jsx'
 
 const STATUS_LABEL = { in_stock: 'in stock', out: 'out', lost: 'lost', retired: 'retired' }
 
@@ -37,6 +39,8 @@ export default function MoveScreen({ engine, orgId, settings }) {
           f.map(e => {
             if (e.clientId !== r.client_id) return e
             const synced = { ...e, synced: true }
+            // "unknown" was only a guess from the local list; once the server agrees it is final.
+            if (r.result === 'unknown') return { ...synced, kind: 'error', title: 'Unknown code', detail: 'not in your inventory' }
             if (r.result === r.predicted) return synced
             if (r.result === 'ok') return { ...synced, kind: 'ok', title: `Synced: ${r.product}`, detail: 'confirmed by server' }
             if (r.result === 'unknown') return { ...synced, kind: 'error', title: 'Unknown code', detail: 'not in your inventory' }
@@ -67,55 +71,79 @@ export default function MoveScreen({ engine, orgId, settings }) {
 
   useScanner(handleScan, settings)
 
+  // Suggest references already in use (e.g. "Van 2") — works offline.
+  const [refs, setRefs] = useState([])
+  useEffect(() => {
+    engine.listUnits(orgId).then(us => setRefs([...new Set(us.map(u => u.last_ref).filter(Boolean))].sort()))
+  }, [engine, orgId, sync.version])
+
+  const setDir = (d, e) => {
+    setDirection(d)
+    e.currentTarget.blur()
+  }
+
   return (
-    <div className="stack">
+    <>
+      <PageHeader
+        title="Check out / in"
+        description="Scan labels to record items leaving or returning. No need to click — just scan."
+      />
       {!sync.online && (
         <div className="notice offline">
-          You’re offline. Keep scanning — everything is saved on this device and sent automatically when the connection is
-          back.
+          <Icon name="wifiOff" />
+          <div>
+            <strong>You’re offline.</strong> Keep scanning — everything is saved on this device and sent automatically
+            when the connection is back.
+          </div>
         </div>
       )}
-      <div className="row wrap">
-        <div className="segmented">
-          <button
-            className={direction === 'out' ? 'active out' : ''}
-            onClick={e => {
-              setDirection('out')
-              e.currentTarget.blur()
-            }}
-          >
-            ↑ Check OUT
-          </button>
-          <button
-            className={direction === 'in' ? 'active in' : ''}
-            onClick={e => {
-              setDirection('in')
-              e.currentTarget.blur()
-            }}
-          >
-            ↓ Check IN
-          </button>
+      <div className={`scan-layout mode-${direction}`}>
+        <div className="scan-controls">
+          <div className="segmented" role="group" aria-label="Direction">
+            <button className={direction === 'out' ? 'active out' : ''} aria-pressed={direction === 'out'} onClick={e => setDir('out', e)}>
+              <Icon name="arrowUp" /> Check OUT
+            </button>
+            <button className={direction === 'in' ? 'active in' : ''} aria-pressed={direction === 'in'} onClick={e => setDir('in', e)}>
+              <Icon name="arrowDown" /> Check IN
+            </button>
+          </div>
+          <label>
+            Reference {direction === 'out' ? '' : '(optional)'}
+            <input
+              list="move-refs"
+              placeholder="e.g. Van 2 · Job 1043"
+              value={reference}
+              onChange={e => setReference(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && e.currentTarget.blur()}
+            />
+            <datalist id="move-refs">
+              {refs.map(r => (
+                <option key={r} value={r} />
+              ))}
+            </datalist>
+            <span className="hint">Where the items are going — shown on the Overview under “Out right now”.</span>
+          </label>
+
+          <ScanFlash entry={feed[0]} idle={direction === 'out' ? 'Ready to check OUT' : 'Ready to check IN'} />
+          <ScanInput onScan={handleScan} />
         </div>
-        <label className="grow">
-          Reference (optional)
-          <input
-            placeholder="e.g. Van 2 · Job 1043"
-            value={reference}
-            onChange={e => setReference(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && e.currentTarget.blur()}
-          />
-        </label>
+
+        <Section flush title="This session" description="Scans on this device since you opened this screen">
+          <div className="session-stats" style={{ padding: '16px 16px 0' }}>
+            <Stat label="Moved" value={counts.ok} tone={counts.ok ? 'ok' : ''} />
+            <Stat label="Need attention" value={counts.problems} tone={counts.problems ? 'warn' : ''} />
+          </div>
+          <div className="feed-panel" style={{ marginTop: 16, borderTop: '1px solid var(--border)' }}>
+            {feed.length ? (
+              <ScanFeed entries={feed} />
+            ) : (
+              <EmptyState icon="scan" title="No scans yet">
+                Scanned items appear here with their sync status.
+              </EmptyState>
+            )}
+          </div>
+        </Section>
       </div>
-
-      <ScanFlash entry={feed[0]} idle={direction === 'out' ? 'Ready to check OUT' : 'Ready to check IN'} />
-
-      <div className="row muted small">
-        <span>✓ {counts.ok} moved</span>
-        <span>⚠ {counts.problems} need attention</span>
-      </div>
-
-      <ScanInput onScan={handleScan} />
-      <ScanFeed entries={feed} />
-    </div>
+    </>
   )
 }
