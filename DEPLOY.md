@@ -11,6 +11,7 @@ Supabase to tell Auth the production URL.
 3. **SQL editor** → run, in order:
    - `supabase/migrations/20261116000000_init.sql`
    - `supabase/migrations/20261117000000_offline_sync.sql`
+   - `supabase/migrations/20261118000000_harden_grants.sql`
 
    Or with the CLI: `supabase link --project-ref <ref>` then `supabase db push`.
 4. **Project Settings → API**: copy the **Project URL** and the **anon / publishable** key.
