@@ -192,3 +192,36 @@ button:disabled { opacity: 0.45; cursor: default; }
   .table th:nth-child(4), .table td:nth-child(4) { display: none; }
   .segmented button { padding: 12px 14px; font-size: 15px; }
 }
+
+/* sync / offline */
+.sync-badge { display: flex; align-items: center; margin-left: auto; border-radius: 99px; background: #2a2d35; }
+.sync-badge + .ghost { margin-left: 0; }
+.sync-main { background: none; color: #fff; padding: 6px 12px; font-size: 13px; display: flex; align-items: center; gap: 8px; }
+.sync-retry { background: none; color: #fff; padding: 6px 10px 6px 0; font-size: 14px; }
+.sync-dot { width: 8px; height: 8px; border-radius: 50%; background: #4ade80; }
+.sync-badge.offline .sync-dot { background: #f87171; }
+.sync-badge.pending .sync-dot, .sync-badge.syncing .sync-dot { background: #fbbf24; }
+.sync-badge.syncing .sync-dot { animation: blink 0.8s infinite alternate; }
+.sync-att { color: #fbbf24; }
+@keyframes blink { to { opacity: 0.25; } }
+.notice.offline { background: var(--warn-bg); color: var(--warn); }
+.badge { display: inline-block; margin-left: 6px; background: var(--error); color: #fff; border-radius: 99px; font-size: 11px; padding: 1px 7px; }
+.pill.pending { background: var(--warn-bg); color: var(--warn); }
+
+/* history */
+.filters { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; align-items: end; }
+.filter-actions { justify-content: flex-end; }
+.dir { font-weight: 700; margin-right: 6px; }
+.dir.out { color: var(--warn); }
+.dir.in { color: var(--ok); }
+.pending-row { background: #fffbeb; }
+.late-row td { opacity: 0.65; }
+.mono { font-family: 'JetBrains Mono', ui-monospace, monospace; }
+.attention { border-color: var(--warn); }
+.att-list { list-style: none; margin: 8px 0 0; padding: 0; }
+.att-list li { display: flex; justify-content: space-between; gap: 12px; padding: 10px 0; border-top: 1px solid var(--rule); flex-wrap: wrap; }
+.small-btn { padding: 4px 10px; font-size: 13px; }
+@media (max-width: 640px) {
+  .sync-main { font-size: 12px; padding: 6px 8px; }
+  .topbar { flex-wrap: wrap; }
+}

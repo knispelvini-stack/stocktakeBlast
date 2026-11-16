@@ -50,7 +50,10 @@ export function ScanFeed({ entries }) {
           <code>{e.code}</code>
           <span className="feed-title">{e.title}</span>
           <span className="muted">{e.detail}</span>
-          <span className="muted time">{e.time}</span>
+          <span className="muted time">
+            {e.clientId && (e.synced ? <span title="Confirmed by server">☁︎ </span> : <span title="Saved on this device, waiting to sync">⏳ </span>)}
+            {e.time}
+          </span>
         </li>
       ))}
     </ul>

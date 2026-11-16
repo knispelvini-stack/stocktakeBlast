@@ -1,55 +1,32 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react'
 import { supabase } from '../lib/supabase.js'
 import { useScanner } from '../lib/useScanner.js'
 import { beep } from '../lib/beep.js'
 import { ScanInput, ScanFlash, ScanFeed, makeEntry } from './ScanParts.jsx'
 
-export default function CountScreen({ orgId, settings }) {
+export default function CountScreen({ engine, orgId, settings }) {
+  const sync = useSyncExternalStore(engine.subscribe, engine.getState)
   const [sessions, setSessions] = useState(null)
   const [activeId, setActiveId] = useState(null)
   const [name, setName] = useState('')
 
-  const load = useCallback(async () => {
-    const { data, error } = await supabase
-      .from('count_sessions')
-      .select('id, name, status, created_at, closed_at')
-      .eq('org_id', orgId)
-      .order('created_at', { ascending: false })
-      .limit(50)
-    if (error) alert(error.message)
-    else setSessions(data)
-  }, [orgId])
-
   useEffect(() => {
-    load()
-  }, [load])
+    engine.listSessions(orgId).then(setSessions)
+  }, [engine, orgId, sync.version])
 
   async function create(e) {
     e.preventDefault()
-    const { data, error } = await supabase
-      .from('count_sessions')
-      .insert({ org_id: orgId, name: name.trim() || `Stocktake ${new Date().toLocaleDateString()}` })
-      .select('id')
-      .single()
-    if (error) return alert(error.message)
+    const id = await engine.createSession({
+      orgId,
+      name: name.trim() || `Stocktake ${new Date().toLocaleDateString()}`,
+    })
     setName('')
-    await load()
-    setActiveId(data.id)
+    setActiveId(id)
   }
 
   const active = sessions?.find(s => s.id === activeId)
   if (active) {
-    return (
-      <CountSession
-        session={active}
-        settings={settings}
-        onBack={() => {
-          setActiveId(null)
-          load()
-        }}
-        onClosed={load}
-      />
-    )
+    return <CountSession engine={engine} orgId={orgId} session={active} settings={settings} onBack={() => setActiveId(null)} />
   }
 
   return (
@@ -57,10 +34,15 @@ export default function CountScreen({ orgId, settings }) {
       <form className="card row wrap" onSubmit={create}>
         <label className="grow">
           New stocktake
-          <input placeholder={`Stocktake ${new Date().toLocaleDateString()}`} value={name} onChange={e => setName(e.target.value)} />
+          <input
+            placeholder={`Stocktake ${new Date().toLocaleDateString()}`}
+            value={name}
+            onChange={e => setName(e.target.value)}
+          />
         </label>
         <button className="primary">Start counting</button>
       </form>
+      {!sync.online && <p className="muted small">Offline: you can start and count a stocktake now; it syncs later.</p>}
 
       {sessions === null ? (
         <p className="muted">Loading…</p>
@@ -72,6 +54,7 @@ export default function CountScreen({ orgId, settings }) {
             <li key={s.id} onClick={() => setActiveId(s.id)} className="clickable">
               <strong>{s.name}</strong>
               <span className={`pill ${s.status}`}>{s.status}</span>
+              {s.pending && <span className="pill pending">not synced</span>}
               <span className="muted small">{new Date(s.created_at).toLocaleString()}</span>
             </li>
           ))}
@@ -81,46 +64,75 @@ export default function CountScreen({ orgId, settings }) {
   )
 }
 
-function CountSession({ session, settings, onBack, onClosed }) {
+function CountSession({ engine, orgId, session, settings, onBack }) {
+  const sync = useSyncExternalStore(engine.subscribe, engine.getState)
   const [summary, setSummary] = useState(null)
+  const [pendingHere, setPendingHere] = useState(0)
   const [feed, setFeed] = useState([])
   const [closing, setClosing] = useState(false)
   const [apply, setApply] = useState(true)
-  const [closed, setClosed] = useState(session.status === 'closed')
-  const timer = useRef(null)
+  const closed = session.status === 'closed'
 
-  const refresh = useCallback(async () => {
-    const { data, error } = await supabase.rpc('count_summary', { p_session: session.id })
-    if (!error) setSummary(data)
-  }, [session.id])
+  // Other devices' scans for this session (when online).
+  useEffect(() => {
+    if (!session.pending) engine.pullScans(session.id).catch(() => {})
+  }, [engine, session.id, session.pending])
+
+  const recompute = useCallback(async () => {
+    const [s, p] = await Promise.all([engine.sessionSummary(orgId, session.id), engine.pendingForSession(session.id)])
+    setSummary(s)
+    setPendingHere(p)
+  }, [engine, orgId, session.id])
 
   useEffect(() => {
-    refresh()
-    return () => clearTimeout(timer.current)
-  }, [refresh])
-
-  function scheduleRefresh() {
-    clearTimeout(timer.current)
-    timer.current = setTimeout(refresh, 300)
-  }
+    recompute()
+  }, [recompute, sync.version])
 
   function push(entry) {
     setFeed(f => [entry, ...f].slice(0, 50))
     beep(entry.kind, settings.sound)
   }
 
+  useEffect(
+    () =>
+      engine.onResult(r => {
+        if (r.kind !== 'scan') return
+        setFeed(f =>
+          f.map(e => {
+            if (e.clientId !== r.client_id) return e
+            if (r.result === r.predicted) return { ...e, synced: true }
+            const map = {
+              ok: ['ok', `Synced: ${r.product}`],
+              duplicate: ['warn', 'Already counted on another device'],
+              unknown: ['error', 'Unknown code'],
+              session_closed: ['error', 'Rejected: stocktake was already closed'],
+            }
+            const [kind, title] = map[r.result] ?? ['error', 'Sync error']
+            return { ...e, synced: true, kind, title, detail: r.message || '' }
+          }),
+        )
+      }),
+    [engine],
+  )
+
   async function handleScan(code) {
-    const { data, error } = await supabase.rpc('record_scan', { p_session: session.id, p_code: code })
-    if (error) return push(makeEntry('error', code, 'Error', error.message))
-    if (data.result === 'ok') {
-      if (data.unit_status === 'in_stock') push(makeEntry('ok', code, data.product))
-      else push(makeEntry('warn', code, `Found: ${data.product}`, `system says "${data.unit_status}"`))
-    } else if (data.result === 'duplicate') {
-      push(makeEntry('warn', code, 'Already counted', data.product))
-    } else {
-      push(makeEntry('error', code, 'Unknown code', 'Not in your inventory'))
+    let r
+    try {
+      r = await engine.recordScan({ orgId, sessionId: session.id, code })
+    } catch (e) {
+      return push(makeEntry('error', code, 'NOT SAVED', e.message))
     }
-    scheduleRefresh()
+    const base = { clientId: r.client_id }
+    if (r.result === 'ok') {
+      if (r.unit_status === 'in_stock') push({ ...makeEntry('ok', r.code, r.product), ...base })
+      else push({ ...makeEntry('warn', r.code, `Found: ${r.product}`, `system says "${r.unit_status}"`), ...base })
+    } else if (r.result === 'duplicate') {
+      push({ ...makeEntry('warn', r.code, 'Already counted', r.product), ...base })
+    } else if (r.result === 'session_closed') {
+      push(makeEntry('error', r.code, 'Stocktake is closed'))
+    } else {
+      push({ ...makeEntry('warn', r.code, 'Not in local list', 'saved — will be checked on sync'), ...base })
+    }
   }
 
   useScanner(handleScan, { ...settings, enabled: !closed && !closing })
@@ -129,11 +141,12 @@ function CountSession({ session, settings, onBack, onClosed }) {
     const { data, error } = await supabase.rpc('close_count', { p_session: session.id, p_apply: apply })
     if (error) return alert(error.message)
     setClosing(false)
-    setClosed(true)
-    onClosed()
+    await engine.markSessionClosed(session.id)
+    await engine.refreshOrg(orgId)
     if (data.applied) alert(`Stocktake closed. ${data.lost} marked lost, ${data.found} returned to stock.`)
   }
 
+  const canClose = sync.online && pendingHere === 0
   const pct = summary?.expected ? Math.round((summary.matched / summary.expected) * 100) : 0
 
   return (
@@ -146,11 +159,19 @@ function CountSession({ session, settings, onBack, onClosed }) {
         {closed ? (
           <span className="pill closed">closed</span>
         ) : (
-          <button className="primary" onClick={() => setClosing(true)}>
+          <button className="primary" disabled={!canClose} onClick={() => setClosing(true)}>
             Finish stocktake
           </button>
         )}
       </div>
+      {!closed && !canClose && (
+        <div className="notice offline">
+          {pendingHere > 0
+            ? `${pendingHere} scan${pendingHere === 1 ? '' : 's'} of this stocktake still on this device. `
+            : ''}
+          Finishing needs a connection and every scan synced, so the result includes all devices. You can keep counting.
+        </div>
+      )}
 
       {summary && (
         <div className="kpis">
@@ -179,13 +200,7 @@ function CountSession({ session, settings, onBack, onClosed }) {
       {summary && (
         <div className="grid2">
           <UnitList title="Missing" tone="error" items={summary.missing} empty="Nothing missing." />
-          <UnitList
-            title="Found (system had them as out / lost)"
-            tone="warn"
-            items={summary.extra}
-            empty="None."
-            showStatus
-          />
+          <UnitList title="Found (system had them as out / lost)" tone="warn" items={summary.extra} empty="None." showStatus />
           {summary.unknown.length > 0 && (
             <div className="card">
               <h3>Unknown codes</h3>
@@ -216,7 +231,7 @@ function CountSession({ session, settings, onBack, onClosed }) {
             </label>
             <p className="muted small">
               Only tick this if you scanned the whole warehouse. A partial count would mark everything you didn’t reach as
-              lost.
+              lost. Other devices must have synced their scans first.
             </p>
             <div className="row end">
               <button className="ghost" onClick={() => setClosing(false)}>

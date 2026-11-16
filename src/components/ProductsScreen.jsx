@@ -2,8 +2,9 @@ import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase.js'
 import Labels from './Labels.jsx'
 
-export default function ProductsScreen({ orgId }) {
+export default function ProductsScreen({ engine, orgId, onShowHistory }) {
   const [products, setProducts] = useState(null)
+  const [offline, setOffline] = useState(false)
   const [selected, setSelected] = useState(null)
   const [form, setForm] = useState({ name: '', sku: '' })
   const [query, setQuery] = useState('')
@@ -13,7 +14,11 @@ export default function ProductsScreen({ orgId }) {
       supabase.from('products').select('id, name, sku').eq('org_id', orgId).order('name'),
       supabase.from('product_stock').select('*').eq('org_id', orgId),
     ])
-    if (error) return alert(error.message)
+    if (error) {
+      if (!error.code) return setOffline(true)
+      return alert(error.message)
+    }
+    setOffline(false)
     const byId = Object.fromEntries((stock ?? []).map(s => [s.product_id, s]))
     setProducts(prods.map(p => ({ ...p, stock: byId[p.id] ?? { in_stock: 0, out: 0, lost: 0, total: 0 } })))
   }, [orgId])
@@ -33,7 +38,32 @@ export default function ProductsScreen({ orgId }) {
   }
 
   const product = products?.find(p => p.id === selected)
-  if (product) return <ProductDetail product={product} onBack={() => { setSelected(null); load() }} />
+  if (product)
+    return (
+      <ProductDetail
+        engine={engine}
+        orgId={orgId}
+        product={product}
+        onShowHistory={onShowHistory}
+        onBack={() => {
+          setSelected(null)
+          load()
+        }}
+      />
+    )
+
+  if (offline)
+    return (
+      <div className="stack">
+        <div className="notice offline">
+          Managing products and printing labels needs a connection (new codes are created on the server). Scanning still
+          works offline.
+        </div>
+        <button className="ghost" onClick={load}>
+          Try again
+        </button>
+      </div>
+    )
 
   const shown = (products ?? []).filter(p =>
     `${p.name} ${p.sku ?? ''}`.toLowerCase().includes(query.trim().toLowerCase()),
@@ -91,7 +121,7 @@ export default function ProductsScreen({ orgId }) {
   )
 }
 
-function ProductDetail({ product, onBack }) {
+function ProductDetail({ engine, orgId, product, onBack, onShowHistory }) {
   const [units, setUnits] = useState(null)
   const [count, setCount] = useState(1)
   const [busy, setBusy] = useState(false)
@@ -123,12 +153,14 @@ function ProductDetail({ product, onBack }) {
     if (error) return alert(error.message)
     await load()
     setChecked(new Set(data.map(u => u.id)))
+    engine.pullUnits(orgId).catch(() => {}) // make the new codes scannable offline
   }
 
   async function setStatus(unit, status) {
     const { error } = await supabase.from('units').update({ status }).eq('id', unit.id)
-    if (error) alert(error.message)
-    else load()
+    if (error) return alert(error.message)
+    load()
+    engine.pullUnits(orgId).catch(() => {})
   }
 
   function toggle(id) {
@@ -207,7 +239,9 @@ function ProductDetail({ product, onBack }) {
                   <input type="checkbox" checked={checked.has(u.id)} onChange={() => toggle(u.id)} />
                 </td>
                 <td>
-                  <code>{u.code}</code>
+                  <button className="link mono" title="Movement history" onClick={() => onShowHistory(u.code)}>
+                    {u.code}
+                  </button>
                 </td>
                 <td>
                   <span className={`pill ${u.status}`}>{u.status.replace('_', ' ')}</span>

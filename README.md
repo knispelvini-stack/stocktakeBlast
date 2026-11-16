@@ -9,14 +9,17 @@ driven by any USB/Bluetooth barcode scanner in keyboard (HID) mode — no driver
   update stock (missing → lost, found → in stock).
 - **Products & labels** — create products, generate N unique unit codes, print Code 128 labels on
   A4 sheets (Avery L7159, 3 × 8) or a 50 × 25 mm thermal roll.
+- **History** — every movement with who/when/reference, filter by unit (scan a label), direction,
+  reference and dates, CSV export; scans waiting to sync and sync conflicts are shown on top.
 - **Scanner** — setup checklist, live test and speed measurement to tune detection.
+- **Works offline** — keep scanning with no connection; everything syncs when it's back.
 
 Stack: React 19 + Vite, Supabase (Postgres, Auth, RLS). No router.
 
 ## Setup
 
 1. Create a Supabase project.
-2. Run `supabase/migrations/20261116000000_init.sql` (SQL editor, or `supabase db push`).
+2. Run the files in `supabase/migrations/` **in order** (SQL editor, or `supabase db push`).
 3. Auth → Providers: keep **Email** enabled. For local testing you can turn off "Confirm email".
 4. `cp .env.example .env` and fill in the project URL and **anon** key.
 5. `npm install && npm run dev`
@@ -36,6 +39,38 @@ scanner? Measure it on the **Scanner** tab and raise the threshold (saved per de
 
 Unit codes are 8 characters from `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` (no 0/O or 1/I).
 
+## Offline mode
+
+The app is **local-first**: every scan is written to the device (IndexedDB) before anything else,
+and the answer on screen comes from a local copy of the company's units. A sync loop then pushes
+queued scans to `sync_events()` in batches of 100.
+
+- **Nothing is lost on a dropped connection.** Each scan has a UUID generated on the device that
+  becomes the row id on the server, so a batch that is re-sent after a lost response is not duplicated.
+- **Conflicts: the latest scan time wins**, not the latest arrival. A scan made offline at 10:00 that
+  reaches the server after another device moved the same unit at 11:00 is stored in history as
+  *not applied* and listed under **History → Needs attention**.
+- **The app opens offline** (service worker caches the app shell; production build only) and you stay
+  signed in.
+- **Top bar badge** always shows the truth: *Synced* / *N waiting to sync* / *Offline · N saved on device*.
+- A code the device doesn't know (e.g. labels printed on another device since the last refresh) is
+  still saved and decided by the server on sync.
+- Starting and counting a stocktake works offline. **Finishing** one needs a connection and all of
+  this device's scans for it synced, so the result includes every device.
+
+Limits worth knowing:
+
+- Sync runs only while the app is open. Queued scans survive closing the browser and are sent the
+  next time it's opened.
+- Conflict resolution trusts the device clock. Clocks ahead are clamped to the server time; a clock
+  that is *behind* will lose conflicts it should win. Keep devices on automatic time.
+- **iPhone/iPad (Safari):** Safari may delete website storage after ~7 days without use. Add the app
+  to the Home Screen there, and don't leave scans unsynced for days.
+- Creating products, generating codes and printing labels need a connection.
+- Signing out deletes this device's local data (shared devices). If scans are still queued, the app
+  warns first.
+- The whole unit list of the company is cached on each device (fine up to tens of thousands).
+
 ## Data model and security
 
 | Table | Purpose | Client writes |
@@ -43,8 +78,11 @@ Unit codes are 8 characters from `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` (no 0/O or 1
 | `orgs`, `org_members` | companies and who belongs to them | via `create_org()` only |
 | `products` | product types (name, optional SKU) | insert/update by members, delete by owner |
 | `units` | one row per physical item, `status`: in_stock / out / lost / retired | created via `generate_units()`; members may update (retire); owner deletes |
-| `movements` | audit trail of every check out/in | **none** — only via `move_unit()` / `close_count()` |
-| `count_sessions`, `count_scans` | stocktakes and each scan | session insert; scans via `record_scan()` only |
+| `movements` | audit trail of every check out/in (`scanned_at`, `applied`) | **none** — only via `sync_events()` / `close_count()` |
+| `count_sessions`, `count_scans` | stocktakes and each scan | via `sync_events()` (session insert also allowed) |
+
+Read RPCs used by the offline cache and History: `my_orgs`, `pull_units`, `pull_sessions`,
+`pull_scans`, `movement_history` (keyset-paginated).
 
 Every table has RLS keyed on `org_members` + `auth.uid()`. Composite foreign keys
 (`(product_id, org_id)`, `(unit_id, org_id)`, `(session_id, org_id)`) make cross-tenant links
@@ -54,19 +92,20 @@ themselves; `anon` cannot execute any of them.
 ## Tests
 
 ```bash
-npm test                     # scanner detection unit tests
-PGURL=postgres://... supabase/tests/run.sh   # DB smoke + tenant-isolation test (empty throwaway DB!)
+npm test                                     # scanner detection + sync engine (fake IndexedDB)
+PGURL=postgres://... npm run test:db         # SQL: sync rules, conflicts, tenant isolation (throwaway DB!)
+PGHOST=... PGUSER=... npm run test:e2e       # real browser goes offline/online against the real SQL
 ```
 
-The DB test runs the full flow as user A and then attacks A's company as user B. The `ERROR`
-lines in its output are expected — each one is a blocked attempt.
+The e2e test needs Postgres 15+ and Playwright with Chromium. It mocks only the Supabase HTTP layer
+(`e2e/mock.cjs` calls the real SQL functions as role `authenticated`); it goes offline, scans,
+reloads the page offline, creates a stocktake, comes back online and checks the database.
 
 ## Not in the MVP (yet)
 
 - Inviting team members (no UI/RPC; add rows to `org_members` manually for now)
 - Billing / plans
-- Movement history screen and reports/export
+- Reports beyond the movement history / CSV
 - Camera scanning on phones
-- Offline mode (scans need a connection)
 - Lists over 1000 units per product are truncated in the product screen (stock counts and
   stocktake summaries are computed in SQL and are not affected)
