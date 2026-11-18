@@ -177,10 +177,11 @@ begin
 end;
 $$;
 
--- movement_history: vehicle name + optional filter by vehicle. New signature
--- (extra parameter), so drop the old one first; re-grant below.
-drop function public.movement_history(uuid, text, text, text, timestamptz, timestamptz, timestamptz, uuid, int);
-create function public.movement_history(
+-- activity_feed: movement history + vehicle name + optional filter by vehicle.
+-- A new function rather than changing movement_history's signature: that
+-- would need DROP FUNCTION, and older app versions still call the old one.
+-- movement_history stays as it is (no vehicle) until those versions are gone.
+create function public.activity_feed(
   p_org        uuid,
   p_code       text        default null,
   p_direction  text        default null,
@@ -223,5 +224,5 @@ begin
   ), '[]'::jsonb);
 end;
 $$;
-revoke execute on function public.movement_history(uuid, text, text, text, timestamptz, timestamptz, timestamptz, uuid, int, uuid) from public, anon;
-grant execute on function public.movement_history(uuid, text, text, text, timestamptz, timestamptz, timestamptz, uuid, int, uuid) to authenticated;
+revoke execute on function public.activity_feed(uuid, text, text, text, timestamptz, timestamptz, timestamptz, uuid, int, uuid) from public, anon;
+grant execute on function public.activity_feed(uuid, text, text, text, timestamptz, timestamptz, timestamptz, uuid, int, uuid) to authenticated;

@@ -30,7 +30,7 @@ export default function OverviewScreen({ engine, orgId, go, onShowHistory }) {
       setAttention(a.length)
     })
     // Fresh activity from the server when online (the cache above is the offline fallback).
-    supabase.rpc('movement_history', { p_org: orgId, p_limit: 8 }).then(({ data, error }) => {
+    supabase.rpc('activity_feed', { p_org: orgId, p_limit: 8 }).then(({ data, error }) => {
       if (!alive || error) return
       setRecent(data)
       engine.cacheHistory(orgId, data)

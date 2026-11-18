@@ -250,9 +250,10 @@ select sync_events(jsonb_build_array(jsonb_build_object(
   'kind','move','client_id',gen_random_uuid(),'org_id',:'org_a','code',:'vu1','direction','out','vehicle_id',:'van2'))) as r \gset
 select pg_temp.check((:'r'::jsonb)->0->>'result' = 'ok', 'check out onto a vehicle');
 select pg_temp.check((select e->>'vehicle_id' from jsonb_array_elements(pull_units(:'org_a')) e where e->>'code' = :'vu1') = :'van2', 'pull_units: vehicle of out unit');
-select pg_temp.check(movement_history(:'org_a', p_code => :'vu1')->0->>'vehicle' = 'Van 2', 'history shows vehicle');
-select pg_temp.check(jsonb_array_length(movement_history(:'org_a', p_vehicle => :'van2')) = 1, 'history filter by vehicle');
+select pg_temp.check(activity_feed(:'org_a', p_code => :'vu1')->0->>'vehicle' = 'Van 2', 'history shows vehicle');
+select pg_temp.check(jsonb_array_length(activity_feed(:'org_a', p_vehicle => :'van2')) = 1, 'history filter by vehicle');
 select pg_temp.check(jsonb_array_length(pull_vehicles(:'org_a')) = 2, 'pull_vehicles');
+select pg_temp.check(movement_history(:'org_a', p_code => :'vu1')->0->>'code' = :'vu1', 'old movement_history still works for older app versions');
 update vehicles set active = false where id = :'van1';
 select pg_temp.check((select not active from vehicles where id = :'van1'), 'vehicle deactivated (not deleted)');
 delete from vehicles where id = :'van1';
@@ -302,6 +303,7 @@ select pg_temp.check((select count(*) from themes) = 0, 'B sees no themes of A')
 select pg_temp.check(pg_temp.fails(format('select add_unit_with_code(%L, %L)', :'ban45', 'EVIL-1')), 'B cannot add units to A');
 select pg_temp.check(pg_temp.fails(format('select next_codes(%L)', :'ban45')), 'B cannot preview A codes');
 select pg_temp.check(pg_temp.fails(format('select pull_vehicles(%L)', :'org_a')), 'B cannot list A vehicles');
+select pg_temp.check(pg_temp.fails(format('select activity_feed(%L)', :'org_a')), 'B cannot read A activity_feed');
 select pg_temp.check((select count(*) from vehicles) = 0, 'B sees no vehicles of A');
 insert into products (org_id, name) values (:'org_b', 'B thing') returning id as b_prod \gset
 select code as b_unit from generate_units(:'b_prod', 1) \gset

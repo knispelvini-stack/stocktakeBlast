@@ -69,7 +69,7 @@ export default function HistoryScreen({ engine, orgId, settings, initialCode = '
       from: toIsoStart(filters.from),
       to: toIsoEndExclusive(filters.to),
     }
-    const { data, error } = await supabase.rpc('movement_history', params())
+    const { data, error } = await supabase.rpc('activity_feed', params())
     if (error) {
       // offline (or server down): show what this device has cached
       setRows(await engine.cachedHistory(orgId, localFilters))
@@ -95,7 +95,7 @@ export default function HistoryScreen({ engine, orgId, settings, initialCode = '
 
   async function loadMore() {
     setLoadingMore(true)
-    const { data, error } = await supabase.rpc('movement_history', params(rows[rows.length - 1]))
+    const { data, error } = await supabase.rpc('activity_feed', params(rows[rows.length - 1]))
     setLoadingMore(false)
     if (error) return ui.toast(error.message, 'error')
     setRows(r => [...r, ...data])

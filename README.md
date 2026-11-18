@@ -130,7 +130,7 @@ Limits worth knowing:
 | `count_sessions`, `count_scans` | stocktakes and each scan | via `sync_events()` (session insert also allowed) |
 
 Read RPCs used by the offline cache and History: `my_orgs`, `pull_units`, `pull_sessions`,
-`pull_scans`, `movement_history` (keyset-paginated).
+`pull_scans`, `pull_vehicles`, `activity_feed` (keyset-paginated; `movement_history` is the older version kept for app versions still in use).
 
 Every table has RLS keyed on `org_members` + `auth.uid()`. Composite foreign keys
 (`(product_id, org_id)`, `(unit_id, org_id)`, `(session_id, org_id)`) make cross-tenant links
