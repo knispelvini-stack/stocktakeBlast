@@ -33,6 +33,18 @@ function useStored(key, initial) {
   return [v, setV]
 }
 
+// For a label printer's own software (e.g. a P-touch / Zebra database import)
+// or a print shop: one row per label, the code and the product.
+function downloadCsv(units) {
+  const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`
+  const body = ['code,product', ...units.map(u => `${esc(u.code)},${esc(u.product)}`)].join('\r\n')
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(new Blob(['\uFEFF' + body], { type: 'text/csv;charset=utf-8' }))
+  a.download = `labels-${new Date().toISOString().slice(0, 10)}.csv`
+  a.click()
+  URL.revokeObjectURL(a.href)
+}
+
 export default function Labels({ units, onClose, backLabel = 'Back' }) {
   const [layout, setLayout] = useStored('stb.labelLayout', 'a4')
   const [symbol, setSymbol] = useStored('stb.labelSymbol', 'barcode')
@@ -47,9 +59,14 @@ export default function Labels({ units, onClose, backLabel = 'Back' }) {
           title="Print labels"
           description={`${units.length} label${units.length === 1 ? '' : 's'} · print at 100% scale (no “fit to page”) so scanners read them reliably.`}
           actions={
-            <button className="primary" onClick={() => window.print()} disabled={!units.length}>
-              <Icon name="printer" /> Print {units.length} label{units.length === 1 ? '' : 's'}
-            </button>
+            <>
+              <button className="secondary" onClick={() => downloadCsv(units)} disabled={!units.length} data-testid="labels-csv">
+                <Icon name="download" /> Codes (CSV)
+              </button>
+              <button className="primary" onClick={() => window.print()} disabled={!units.length}>
+                <Icon name="printer" /> Print {units.length} label{units.length === 1 ? '' : 's'}
+              </button>
+            </>
           }
         />
         <div className="form-row" style={{ maxWidth: 760 }}>

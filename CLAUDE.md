@@ -38,6 +38,9 @@ read by keyboard-wedge (HID) USB/Bluetooth scanners. See README.md for the full 
   owner-managed and never deleted (`active = false`).
 - Units are never written by the client directly (no UPDATE grant): status changes go through moves,
   `close_count()` or `set_unit_status()`. Products: only `name`/`sku` are updatable (column grants).
+- Unit condition (`ok`/`damaged`) is separate from status; change it only via `set_unit_condition()`.
+  "Available" = `in_stock` and `ok`. Stocktake scans are never deleted: wrong ones are voided
+  (`count_scan_voids`); every count (summary, close, local `computeSummary`) must ignore voided scans.
 - Corrections never delete or edit a movement: an undo is a new movement with `corrects_id`
   (`undoMove` in sync.js; unsynced scans are just removed from the outbox).
 - Prefer migrations Supabase won't flag as destructive (avoid `DROP`): add a new function instead of

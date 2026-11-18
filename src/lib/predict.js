@@ -12,14 +12,15 @@ export function predictMove(unit, direction) {
 
 export function predictScan(unit, sessionScans) {
   if (!unit) return { result: 'unknown' }
-  const dup = sessionScans.some(s => s.unit_id === unit.id && s.result === 'ok')
+  const dup = sessionScans.some(s => s.unit_id === unit.id && s.result === 'ok' && !s.voided)
   return { result: dup ? 'duplicate' : 'ok', unit_status: unit.status }
 }
 
 // Same semantics as the server's count_summary():
 //   expected = units in_stock; missing = expected not scanned;
 //   extra = scanned units the system has as out/lost/retired; unknown = codes with no unit.
-export function computeSummary(units, scans) {
+export function computeSummary(units, allScans) {
+  const scans = allScans.filter(s => !s.voided)
   const okIds = new Set(scans.filter(s => s.result === 'ok' && s.unit_id).map(s => s.unit_id))
   const expected = units.filter(u => u.status === 'in_stock')
   const byId = new Map(units.map(u => [u.id, u]))

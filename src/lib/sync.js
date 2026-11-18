@@ -114,7 +114,15 @@ export function createSyncEngine({
     }
     await tx.done
     await afterRecord()
-    return { ...pred, code, product: unit?.product ?? null, client_id: ev.client_id, prev: ev.prev }
+    return {
+      ...pred,
+      code,
+      product: unit?.product ?? null,
+      client_id: ev.client_id,
+      prev: ev.prev,
+      condition: unit?.condition ?? 'ok',
+      condition_note: unit?.condition_note ?? null,
+    }
   }
 
   function snapshot(unit) {
@@ -228,6 +236,45 @@ export function createSyncEngine({
     return { ...pred, code, product: unit?.product ?? null, client_id: id }
   }
 
+  // Remove a wrong stocktake scan (works offline). Not synced yet → dropped
+  // from the queue; synced → an 'unscan' event voids it on the server (the
+  // scan row is kept). Scanning the unit again counts it again.
+  async function unscan({ orgId, sessionId, scanId }) {
+    if (inflight.has(scanId)) await flushDone
+    const tx = db.transaction(['scans', 'outbox', 'sessions'], 'readwrite')
+    const session = await tx.objectStore('sessions').get(sessionId)
+    const scan = await tx.objectStore('scans').get(scanId)
+    if (!session || session.status !== 'open' || !scan || scan.voided || !['ok', 'unknown'].includes(scan.result)) {
+      tx.abort()
+      await tx.done.catch(() => {})
+      return { result: 'blocked' }
+    }
+    if (await tx.objectStore('outbox').get(scanId)) {
+      await tx.objectStore('outbox').delete(scanId)
+      await tx.objectStore('scans').delete(scanId)
+      await tx.done
+      await afterRecord()
+      return { result: 'removed' }
+    }
+    const id = uuid()
+    await tx.objectStore('scans').put({ ...scan, voided: true })
+    await tx.objectStore('outbox').put({
+      client_id: id,
+      kind: 'unscan',
+      user_id: ctx.userId,
+      org_id: orgId,
+      session_id: sessionId,
+      scan_id: scanId,
+      code: scan.code,
+      scanned_at: now().toISOString(),
+      seq: ++seq,
+      predicted: 'ok',
+    })
+    await tx.done
+    await afterRecord()
+    return { result: 'queued', client_id: id }
+  }
+
   async function createSession({ orgId, name }) {
     const id = uuid()
     const at = now().toISOString()
@@ -256,8 +303,8 @@ export function createSyncEngine({
 
   // ───────── pushing ─────────
   function toWire(ev) {
-    const { client_id, kind, org_id, code, direction, reference, vehicle_id, corrects, session_id, name, scanned_at } = ev
-    return { client_id, kind, org_id, code, direction, reference, vehicle_id, corrects, session_id, name, scanned_at }
+    const { client_id, kind, org_id, code, direction, reference, vehicle_id, corrects, session_id, scan_id, name, scanned_at } = ev
+    return { client_id, kind, org_id, code, direction, reference, vehicle_id, corrects, session_id, scan_id, name, scanned_at }
   }
 
   async function flush() {
@@ -450,10 +497,13 @@ export function createSyncEngine({
 
   async function pullScans(sessionId) {
     const rows = await call('pull_scans', { p_session: sessionId })
-    const tx = db.transaction('scans', 'readwrite')
+    const tx = db.transaction(['scans', 'outbox'], 'readwrite')
+    const voiding = new Set(
+      (await tx.objectStore('outbox').getAll()).filter(e => e.kind === 'unscan').map(e => e.scan_id),
+    )
     for (const s of rows) {
-      const local = await tx.store.get(s.id)
-      await tx.store.put({ ...local, ...s, pending: false })
+      const local = await tx.objectStore('scans').get(s.id)
+      await tx.objectStore('scans').put({ ...local, ...s, voided: s.voided || voiding.has(s.id), pending: false })
     }
     await tx.done
     bump()
@@ -620,6 +670,7 @@ export function createSyncEngine({
     recordMove,
     undoMove,
     recordScan,
+    unscan,
     createSession,
     pullUnits,
     pullSessions,
