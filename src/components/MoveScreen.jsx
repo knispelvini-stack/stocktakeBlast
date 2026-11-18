@@ -3,7 +3,7 @@ import { useScanner } from '../lib/useScanner.js'
 import { beep } from '../lib/beep.js'
 import { ScanInput, ScanFlash, ScanFeed, makeEntry } from './ScanParts.jsx'
 import Icon from './ui/Icon.jsx'
-import { PageHeader, Section, Stat, EmptyState } from './ui/ui.jsx'
+import { PageHeader, Section, Stat, EmptyState, Modal, useUI } from './ui/ui.jsx'
 
 const STATUS_LABEL = { in_stock: 'in stock', out: 'out', lost: 'lost', retired: 'retired' }
 
@@ -25,6 +25,8 @@ function entryFor(r, direction, vehicle) {
 
 export default function MoveScreen({ engine, orgId, settings }) {
   const sync = useSyncExternalStore(engine.subscribe, engine.getState)
+  const ui = useUI()
+  const [moving, setMoving] = useState(null) // entry whose van is being changed
   const [direction, setDirection] = useState('out')
   const [reference, setReference] = useState('')
   const [feed, setFeed] = useState([])
@@ -82,16 +84,83 @@ export default function MoveScreen({ engine, orgId, settings }) {
       )
     }
     try {
-      const r = await engine.recordMove({ orgId, code, direction, reference, vehicleId: vehicleId || null })
-      const entry = { ...entryFor(r, direction, vehicle), clientId: r.client_id }
-      push(entry)
-      setCounts(c => (entry.kind === 'ok' ? { ...c, ok: c.ok + 1 } : { ...c, problems: c.problems + 1 }))
+      await record(code, direction, reference, vehicleId || null)
     } catch (e) {
       // IndexedDB failure (storage full / blocked) — the only way a scan can be lost.
       setFeed(f => [makeEntry('error', code, 'NOT SAVED', e.message), ...f].slice(0, 50))
       beep('error', settings.sound)
     }
   }
+
+  async function record(code, dir, ref, vehId) {
+    const r = await engine.recordMove({ orgId, code, direction: dir, reference: ref, vehicleId: vehId })
+    const veh = vehicles.find(v => v.id === vehId)
+    const entry = { ...entryFor(r, dir, veh), clientId: r.client_id }
+    // Only a move that changed something can be undone.
+    if (r.result === 'ok') entry.move = { client_id: r.client_id, code: r.code, direction: dir, prev: r.prev, reference: ref, vehicleId: vehId }
+    push(entry)
+    setCounts(c => (entry.kind === 'ok' ? { ...c, ok: c.ok + 1 } : { ...c, problems: c.problems + 1 }))
+    return r
+  }
+
+  function markUndone(entry, detail) {
+    setFeed(f => f.map(e => (e.id === entry.id ? { ...e, kind: 'warn', undone: true, title: `Undone: ${e.title}`, detail } : e)))
+    setCounts(c => ({ ...c, ok: Math.max(0, c.ok - 1) }))
+  }
+
+  // Returns true when the move is gone (or a correction is queued).
+  async function undo(entry, { quiet = false } = {}) {
+    const r = await engine.undoMove({ orgId, move: entry.move })
+    if (r.result === 'blocked') {
+      ui.toast(`Can’t undo ${entry.code}: it was scanned again after this. Scan it the other way instead.`, 'error')
+      return false
+    }
+    if (r.result === 'removed') {
+      markUndone(entry, 'removed before it was sent')
+    } else {
+      markUndone(entry, 'correction recorded')
+      if (!quiet) {
+        push({
+          ...makeEntry('ok', entry.code, entry.move.direction === 'out' ? 'Back in stock (undo)' : 'Back out (undo)', ''),
+          clientId: r.client_id,
+        })
+      }
+    }
+    return true
+  }
+
+  async function changeVehicle(entry, newVehicleId) {
+    setMoving(null)
+    if (!(await undo(entry, { quiet: true }))) return
+    await record(entry.code, 'out', entry.move.reference, newVehicleId || null)
+  }
+
+  const feedActions = e =>
+    e.move && !e.undone ? (
+      <>
+        {e.move.direction === 'out' && vehicles.some(v => v.active) && (
+          <button
+            className="ghost small-btn"
+            onClick={ev => {
+              ev.currentTarget.blur()
+              setMoving(e)
+            }}
+          >
+            <Icon name="truck" size={14} /> Change van
+          </button>
+        )}
+        <button
+          className="ghost small-btn"
+          data-testid="undo"
+          onClick={ev => {
+            ev.currentTarget.blur()
+            undo(e)
+          }}
+        >
+          Undo
+        </button>
+      </>
+    ) : null
 
   useScanner(handleScan, settings)
 
@@ -174,7 +243,7 @@ export default function MoveScreen({ engine, orgId, settings }) {
           </div>
           <div className="feed-panel" style={{ marginTop: 16, borderTop: '1px solid var(--border)' }}>
             {feed.length ? (
-              <ScanFeed entries={feed} />
+              <ScanFeed entries={feed} actions={feedActions} />
             ) : (
               <EmptyState icon="scan" title="No scans yet">
                 Scanned items appear here with their sync status.
@@ -184,6 +253,30 @@ export default function MoveScreen({ engine, orgId, settings }) {
         </Section>
         </div>
       </div>
+      {moving && (
+        <Modal
+          title={`Move ${moving.code} to…`}
+          description="The scan onto the old vehicle is undone and the unit is checked out onto the one you pick."
+          onClose={() => setMoving(null)}
+          size="sm"
+        >
+          <div className="stack" data-testid="change-van">
+            {vehicles
+              .filter(v => v.active && v.id !== moving.move.vehicleId)
+              .map(v => (
+                <button key={v.id} className="secondary" onClick={() => changeVehicle(moving, v.id)}>
+                  <Icon name="truck" /> {v.name}
+                  {v.plate ? <span className="muted small mono"> {v.plate}</span> : null}
+                </button>
+              ))}
+            {moving.move.vehicleId && (
+              <button className="ghost" onClick={() => changeVehicle(moving, null)}>
+                No vehicle
+              </button>
+            )}
+          </div>
+        </Modal>
+      )}
     </>
   )
 }

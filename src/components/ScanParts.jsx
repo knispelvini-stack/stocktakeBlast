@@ -73,17 +73,18 @@ export function ScanFlash({ entry, idle }) {
   )
 }
 
-export function ScanFeed({ entries }) {
+export function ScanFeed({ entries, actions }) {
   if (!entries.length) return null
   return (
     <ul className="feed">
       {entries.map(e => (
-        <li key={e.id} className={e.kind}>
+        <li key={e.id} className={`${e.kind}${e.undone ? " undone" : ""}`}>
           <span className="dot" />
           <code>{e.code}</code>
           <span className="feed-title">{e.title}</span>
           <span className="muted">{e.detail}</span>
           <span className="muted time">
+            {actions && <span className="feed-actions">{actions(e)}</span>}
             {e.clientId &&
               (e.synced ? (
                 <span className="sync-mark ok" title="Confirmed by server">

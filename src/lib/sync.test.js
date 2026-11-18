@@ -292,6 +292,93 @@ test('partial batch result leaves unanswered events queued, then sends them', as
   assert.equal(server.units.get('AAAA1111').status, 'in_stock')
 })
 
+test('undo before sync: taken out of the queue, unit restored, nothing sent', async () => {
+  const { engine, server, db } = await setup()
+  server.online = false
+  const r = await engine.recordMove({ orgId: ORG, code: 'AAAA1111', direction: 'out', vehicleId: 'veh-1', reference: 'Job 1' })
+  assert.equal((await db.get('units', 'u1')).status, 'out')
+  const u = await engine.undoMove({ orgId: ORG, move: { client_id: r.client_id, code: r.code, direction: 'out', prev: r.prev } })
+  assert.equal(u.result, 'removed')
+  const unit = await db.get('units', 'u1')
+  assert.equal(unit.status, 'in_stock')
+  assert.equal(unit.vehicle_id, null)
+  assert.equal(engine.getState().pending, 0)
+  server.online = true
+  await engine.flush()
+  assert.equal(server.calls.filter(c => c.name === 'sync_events').length, 0, 'nothing reached the server')
+})
+
+test('undo after sync: correcting move linked to the original', async () => {
+  const { engine, server, db } = await setup()
+  const r = await engine.recordMove({ orgId: ORG, code: 'AAAA1111', direction: 'out' })
+  await engine.flush()
+  assert.equal(server.units.get('AAAA1111').status, 'out')
+  const u = await engine.undoMove({ orgId: ORG, move: { client_id: r.client_id, code: r.code, direction: 'out', prev: r.prev } })
+  assert.equal(u.result, 'queued')
+  assert.equal((await db.get('units', 'u1')).status, 'in_stock', 'predicted at once')
+  await engine.flush()
+  const sent = server.calls.filter(c => c.name === 'sync_events').at(-1).args.p_events[0]
+  assert.equal(sent.corrects, r.client_id)
+  assert.equal(sent.direction, 'in')
+  assert.equal(server.units.get('AAAA1111').status, 'in_stock')
+  assert.equal((await engine.cachedHistory(ORG)).find(h => h.id === u.client_id).corrects_id, r.client_id)
+})
+
+test('undo a synced check-in: back on the same van locally', async () => {
+  const { engine, db } = await setup()
+  await engine.recordMove({ orgId: ORG, code: 'AAAA1111', direction: 'out', vehicleId: 'veh-2', reference: 'Job 9' })
+  await engine.flush()
+  const r = await engine.recordMove({ orgId: ORG, code: 'AAAA1111', direction: 'in' })
+  await engine.flush()
+  await engine.undoMove({ orgId: ORG, move: { client_id: r.client_id, code: r.code, direction: 'in', prev: r.prev } })
+  const unit = await db.get('units', 'u1')
+  assert.equal(unit.status, 'out')
+  assert.equal(unit.vehicle_id, 'veh-2')
+  assert.equal(unit.last_ref, 'Job 9')
+})
+
+test('undo is refused when the unit moved again since', async () => {
+  const { engine, server } = await setup()
+  server.online = false
+  const r = await engine.recordMove({ orgId: ORG, code: 'AAAA1111', direction: 'out' })
+  await engine.recordMove({ orgId: ORG, code: 'AAAA1111', direction: 'in' })
+  const u = await engine.undoMove({ orgId: ORG, move: { client_id: r.client_id, code: r.code, direction: 'out', prev: r.prev } })
+  assert.equal(u.result, 'blocked')
+  assert.equal(engine.getState().pending, 2, 'queue untouched')
+})
+
+test('undo while the original is being sent waits for the answer', async () => {
+  const { engine, server, db } = await setup()
+  const r = await engine.recordMove({ orgId: ORG, code: 'AAAA1111', direction: 'out' })
+  const orig = server.rpc
+  let release
+  server.rpc = async (n, a) => {
+    if (n === 'sync_events') await new Promise(res => (release = res))
+    return orig(n, a)
+  }
+  const flushing = engine.flush()
+  await new Promise(res => setTimeout(res, 0))
+  const undo = engine.undoMove({ orgId: ORG, move: { client_id: r.client_id, code: r.code, direction: 'out', prev: r.prev } })
+  release()
+  await flushing
+  const u = await undo
+  assert.equal(u.result, 'queued', 'the original reached the server, so a correction is queued')
+  assert.equal((await db.get('units', 'u1')).status, 'in_stock')
+})
+
+test('history search matches code, product, person and reference', async () => {
+  const { engine } = await setup()
+  await engine.cacheHistory(ORG, [
+    { id: 'h1', code: 'BAN-PAW45-01', product: 'Paw Patrol 4x5', user_label: 'Eva', reference: 'Job 3', scanned_at: '2026-11-17T10:00:00Z' },
+    { id: 'h2', code: 'CAS-001', product: 'Castle', user_label: 'Rui', reference: null, scanned_at: '2026-11-17T11:00:00Z' },
+  ])
+  const ids = async q => (await engine.cachedHistory(ORG, { reference: q })).map(r => r.id)
+  assert.deepEqual(await ids('paw'), ['h1'])
+  assert.deepEqual(await ids('ban-paw'), ['h1'])
+  assert.deepEqual(await ids('rui'), ['h2'])
+  assert.deepEqual(await ids('job 3'), ['h1'])
+})
+
 test('pure helpers', () => {
   assert.equal(needsAttention('move', 'ok', { result: 'already' }), true)
   assert.equal(needsAttention('move', 'unknown', { result: 'ok' }), false)

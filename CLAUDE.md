@@ -36,4 +36,10 @@ read by keyboard-wedge (HID) USB/Bluetooth scanners. See README.md for the full 
 - Vehicles: `VEH-NN` labels (own namespace — unit codes/stems can't start with VEH). A scanned
   `VEH-` code on the check-out screen selects the vehicle; it is never a movement. Vehicles are
   owner-managed and never deleted (`active = false`).
+- Units are never written by the client directly (no UPDATE grant): status changes go through moves,
+  `close_count()` or `set_unit_status()`. Products: only `name`/`sku` are updatable (column grants).
+- Corrections never delete or edit a movement: an undo is a new movement with `corrects_id`
+  (`undoMove` in sync.js; unsynced scans are just removed from the outbox).
+- Prefer migrations Supabase won't flag as destructive (avoid `DROP`): add a new function instead of
+  changing a signature, `alter policy` instead of dropping one.
 - After clicking buttons on scan screens, blur them, so a scanner's Enter can't re-trigger them.

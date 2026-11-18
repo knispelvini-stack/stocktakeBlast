@@ -17,7 +17,13 @@ import { predictMove, predictScan, computeSummary, needsAttention, isRetryable, 
 function withMove(unit, status, ev) {
   if (status !== 'out') return { ...unit, status, last_ref: null, out_since: null, vehicle_id: null }
   if (ev && ev.direction === 'out')
-    return { ...unit, status, last_ref: ev.reference ?? null, out_since: ev.scanned_at, vehicle_id: ev.vehicle_id ?? null }
+    return {
+      ...unit,
+      status,
+      last_ref: ev.reference ?? null,
+      out_since: ev.out_since ?? ev.scanned_at,
+      vehicle_id: ev.vehicle_id ?? null,
+    }
   return { ...unit, status }
 }
 
@@ -51,6 +57,8 @@ export function createSyncEngine({
   let failures = 0
   let timer = null
   let seq = Date.now() * 1000
+  let inflight = new Set() // client ids of the batch currently being sent
+  let flushDone = Promise.resolve()
 
   // ───────── state ─────────
   function set(patch) {
@@ -98,6 +106,7 @@ export function createSyncEngine({
       seq: ++seq,
       predicted: pred.result,
       product: unit?.product ?? null,
+      prev: pred.result === 'ok' ? snapshot(unit) : null,
     }
     await tx.objectStore('outbox').put(ev)
     if (pred.result === 'ok') {
@@ -105,7 +114,77 @@ export function createSyncEngine({
     }
     await tx.done
     await afterRecord()
-    return { ...pred, code, product: unit?.product ?? null, client_id: ev.client_id }
+    return { ...pred, code, product: unit?.product ?? null, client_id: ev.client_id, prev: ev.prev }
+  }
+
+  function snapshot(unit) {
+    const { status, last_ref = null, out_since = null, vehicle_id = null, last_moved_at = null } = unit
+    return { status, last_ref, out_since, vehicle_id, last_moved_at }
+  }
+
+  // Undo a move made on this device (works offline).
+  //   Not synced yet → it is taken out of the queue and never reaches the server.
+  //   Synced → a correcting move (the opposite direction, linked by `corrects`)
+  //   is queued; the server applies it only if nobody moved the unit since.
+  // `move` = { client_id, code, direction, prev } as returned by recordMove.
+  async function undoMove({ orgId, move }) {
+    if (inflight.has(move.client_id)) await flushDone // being sent right now: wait for the answer
+    const tx = db.transaction(['units', 'outbox'], 'readwrite')
+    const outbox = tx.objectStore('outbox')
+    const units = tx.objectStore('units')
+    const unit = await units.index('org_code').get([orgId, move.code])
+    const queued = await outbox.get(move.client_id)
+    const expected = move.direction === 'out' ? 'out' : 'in_stock'
+    const prev = queued?.prev ?? move.prev
+
+    if (queued) {
+      const later = (await outbox.getAll()).some(
+        e => e.kind === 'move' && e.org_id === orgId && e.code === move.code && e.client_id !== move.client_id &&
+          (e.scanned_at > queued.scanned_at || (e.scanned_at === queued.scanned_at && e.seq > queued.seq)),
+      )
+      if (later) {
+        tx.abort()
+        await tx.done.catch(() => {})
+        return { result: 'blocked', code: move.code }
+      }
+      await outbox.delete(move.client_id)
+      if (queued.predicted === 'ok' && unit && prev && unit.last_moved_at === queued.scanned_at) {
+        await units.put({ ...unit, ...prev })
+      }
+      await tx.done
+      await afterRecord()
+      return { result: 'removed', code: move.code }
+    }
+
+    if (!unit || unit.status !== expected) {
+      tx.abort()
+      await tx.done.catch(() => {})
+      return { result: 'blocked', code: move.code }
+    }
+    const direction = move.direction === 'out' ? 'in' : 'out'
+    const back = direction === 'out' // undoing a check-in: back out where it was
+    const ev = {
+      client_id: uuid(),
+      kind: 'move',
+      user_id: ctx.userId,
+      org_id: orgId,
+      code: move.code,
+      direction,
+      corrects: move.client_id,
+      reference: back ? prev?.last_ref ?? null : null,
+      vehicle_id: back ? prev?.vehicle_id ?? null : null,
+      out_since: back ? prev?.out_since ?? null : null,
+      scanned_at: now().toISOString(),
+      seq: ++seq,
+      predicted: 'ok',
+      product: unit.product ?? null,
+      prev: snapshot(unit),
+    }
+    await outbox.put(ev)
+    await units.put({ ...withMove(unit, back ? 'out' : 'in_stock', ev), last_moved_at: ev.scanned_at })
+    await tx.done
+    await afterRecord()
+    return { result: 'queued', code: move.code, client_id: ev.client_id, direction }
   }
 
   async function recordScan({ orgId, sessionId, code: raw }) {
@@ -177,8 +256,8 @@ export function createSyncEngine({
 
   // ───────── pushing ─────────
   function toWire(ev) {
-    const { client_id, kind, org_id, code, direction, reference, vehicle_id, session_id, name, scanned_at } = ev
-    return { client_id, kind, org_id, code, direction, reference, vehicle_id, session_id, name, scanned_at }
+    const { client_id, kind, org_id, code, direction, reference, vehicle_id, corrects, session_id, name, scanned_at } = ev
+    return { client_id, kind, org_id, code, direction, reference, vehicle_id, corrects, session_id, name, scanned_at }
   }
 
   async function flush() {
@@ -193,6 +272,8 @@ export function createSyncEngine({
       return
     }
     flushing = true
+    let done
+    flushDone = new Promise(r => (done = r))
     set({ syncing: true })
     let refreshed = false
     try {
@@ -201,6 +282,7 @@ export function createSyncEngine({
         if (!all.length) break
         all.sort((a, b) => a.scanned_at.localeCompare(b.scanned_at) || a.seq - b.seq)
         const batch = all.slice(0, BATCH)
+        inflight = new Set(batch.map(e => e.client_id))
 
         const { data, error, status } = await rpc('sync_events', { p_events: batch.map(toWire) })
         if (error) {
@@ -222,6 +304,8 @@ export function createSyncEngine({
       backoff()
     } finally {
       flushing = false
+      inflight = new Set()
+      done()
       set({ syncing: false })
       await refreshCounts()
       if (flushAgain) {
@@ -254,6 +338,7 @@ export function createSyncEngine({
             direction: ev.direction,
             reference: ev.reference,
             vehicle_id: ev.vehicle_id ?? null,
+            corrects_id: ev.corrects ?? null,
             applied: res.result === 'ok',
             scanned_at: ev.scanned_at,
             user_label: ctx.label,
@@ -454,7 +539,13 @@ export function createSyncEngine({
 
   async function cachedHistory(orgId, f = {}) {
     const code = f.code ? normalizeCode(f.code) : null
-    const ref = f.reference?.trim().toLowerCase()
+    const q = f.reference?.trim().toLowerCase()
+    const vehicles = q ? await listVehicles(orgId) : []
+    const vName = id => vehicles.find(v => v.id === id)?.name ?? ''
+    const matches = r =>
+      [r.reference, r.code, r.product, r.user_label, r.vehicle ?? vName(r.vehicle_id)].some(x =>
+        (x || '').toLowerCase().includes(q),
+      )
     const rows = await db.getAllFromIndex('history', 'org', orgId)
     return rows
       .filter(
@@ -462,7 +553,7 @@ export function createSyncEngine({
           (!code || r.code === code) &&
           (!f.direction || r.direction === f.direction) &&
           (!f.vehicle || r.vehicle_id === f.vehicle) &&
-          (!ref || (r.reference || '').toLowerCase().includes(ref)) &&
+          (!q || matches(r)) &&
           (!f.from || r.scanned_at >= f.from) &&
           (!f.to || r.scanned_at < f.to),
       )
@@ -527,6 +618,7 @@ export function createSyncEngine({
     start,
     flush,
     recordMove,
+    undoMove,
     recordScan,
     createSession,
     pullUnits,
