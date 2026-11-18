@@ -7,7 +7,7 @@ import { CompanySettings, AccessSettings, VehicleSettings } from './AdminScreen.
 
 // Settings = everything that isn't daily work. Owner-only sections are hidden
 // from staff (and enforced on the server).
-export default function SettingsScreen({ engine, settings, onChange, isOwner, orgId, orgName, overdueDays, onRenamed, who, signOut }) {
+export default function SettingsScreen({ engine, settings, onChange, isOwner, orgId, orgName, overdueDays, scanReturns, onRenamed, who, signOut }) {
   const sections = [
     ...(isOwner
       ? [
@@ -42,7 +42,7 @@ export default function SettingsScreen({ engine, settings, onChange, isOwner, or
           ))}
         </nav>
         <div className="stack">
-          {section === 'company' && <CompanySettings orgId={orgId} orgName={orgName} overdueDays={overdueDays} onRenamed={onRenamed} />}
+          {section === 'company' && <CompanySettings orgId={orgId} orgName={orgName} overdueDays={overdueDays} scanReturns={scanReturns} onRenamed={onRenamed} />}
           {section === 'access' && <AccessSettings orgId={orgId} />}
           {section === 'vehicles' && <VehicleSettings engine={engine} orgId={orgId} />}
           {section === 'scanner' && <ScannerSettings settings={settings} onChange={onChange} />}

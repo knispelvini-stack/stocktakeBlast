@@ -397,6 +397,53 @@ select sync_events(jsonb_build_array(jsonb_build_object('kind','unscan','client_
 select pg_temp.check((:'r'::jsonb)->0->>'result' = 'session_closed', 'no voids after closing');
 select pg_temp.check(pg_temp.fails(format('select _sync_unscan(%L::jsonb)', '{}')), 'internal _sync_unscan not callable');
 
+-- ═══════════ companies that don't scan returns ═══════════
+select pg_temp.as_user('aaaaaaaa-0000-0000-0000-000000000001') \gset
+select id as r1_id, code as r1 from generate_units(:'prod_a', 1) \gset
+select id as r2_id, code as r2 from generate_units(:'prod_a', 1) \gset
+select id as r3_id, code as r3 from generate_units(:'prod_a', 1) \gset
+select pg_temp.check(my_orgs()->0->>'scan_returns' = 'true', 'returns scanned by default');
+select sync_events(jsonb_build_array(jsonb_build_object('kind','move','client_id',gen_random_uuid(),'org_id',:'org_a','code',:'r1','direction','out','vehicle_id',:'van2')))->0->>'result' as r \gset
+select sync_events(jsonb_build_array(jsonb_build_object('kind','move','client_id',gen_random_uuid(),'org_id',:'org_a','code',:'r1','direction','out')))->0->>'result' as r \gset
+select pg_temp.check(:'r' = 'already', 'returns scanned: loading an out unit again is refused');
+update orgs set scan_returns = false where id = :'org_a';
+select pg_temp.check(my_orgs()->0->>'scan_returns' = 'false', 'owner turns off return scanning');
+select sync_events(jsonb_build_array(jsonb_build_object('kind','move','client_id',gen_random_uuid(),'org_id',:'org_a','code',:'r1','direction','out','vehicle_id',:'van2')))->0->>'result' as r \gset
+select pg_temp.check(:'r' = 'already', 'same van within 3 h = double scan');
+select sync_events(jsonb_build_array(jsonb_build_object('kind','move','client_id',gen_random_uuid(),'org_id',:'org_a','code',:'r1','direction','out')))->0->>'result' as r \gset
+select pg_temp.check(:'r' = 'ok', 'other vehicle: accepted as a new load');
+select pg_temp.check((select count(*) from movements m where m.unit_id = :'r1_id' and m.direction = 'out' and m.applied) = 2, 'two loads recorded');
+reset role;
+update movements set scanned_at = scanned_at - interval '4 hours' where unit_id = :'r1_id';
+update units set last_moved_at = last_moved_at - interval '4 hours' where id = :'r1_id';
+set role authenticated;
+select sync_events(jsonb_build_array(jsonb_build_object('kind','move','client_id',gen_random_uuid(),'org_id',:'org_a','code',:'r1','direction','out')))->0->>'result' as r \gset
+select pg_temp.check(:'r' = 'ok', 'same vehicle after 3 h: new load (came back unscanned)');
+select sync_events(jsonb_build_array(jsonb_build_object('kind','move','client_id',gen_random_uuid(),'org_id',:'org_a','code',:'r2','direction','out','vehicle_id',:'van2')))->0->>'result' as r \gset
+-- a closed stocktake in between, so r2 has been "missed" once
+select sync_events(jsonb_build_array(jsonb_build_object('kind','session','client_id','55555555-5555-5555-5555-555555555550','org_id',:'org_a','name','Week 1'))) as r \gset
+select pg_temp.check((close_count('55555555-5555-5555-5555-555555555550', false)->>'applied')::boolean = false, 'week 1 closed');
+\set wk '55555555-5555-5555-5555-555555555551'
+select sync_events(jsonb_build_array(jsonb_build_object('kind','session','client_id',:'wk','org_id',:'org_a','name','Week 2'))) as r \gset
+-- scan everything in stock except r3, plus r1 (came back), not r2 (not back)
+select sync_events(coalesce(jsonb_agg(jsonb_build_object('kind','scan','client_id',gen_random_uuid(),'session_id',:'wk','code',code)), '[]'))
+  from units where org_id = :'org_a' and status = 'in_stock' and id <> :'r3_id' \gset
+select sync_events(jsonb_build_array(jsonb_build_object('kind','scan','client_id',gen_random_uuid(),'session_id',:'wk','code',:'r1'))) as r \gset
+select count_summary(:'wk') as sm \gset
+select pg_temp.check((select bool_or(e->>'code' = :'r3') from jsonb_array_elements((:'sm'::jsonb)->'missing') e), 'not scanned, was in stock → missing');
+select pg_temp.check((select e->>'vehicle' = 'Van 2' and (e->>'missed')::int = 1 from jsonb_array_elements((:'sm'::jsonb)->'not_back') e where e->>'code' = :'r2'), 'loaded, never seen since → not back (Van 2, missed 1 stocktake)');
+select pg_temp.check(not exists (select 1 from jsonb_array_elements((:'sm'::jsonb)->'extra') e where e->>'code' = :'r1'), 'an out unit scanned is not "unexpected" here');
+select pg_temp.check(((:'sm'::jsonb)->>'returned')::int >= 1, 'counted as back from jobs');
+select pg_temp.check(close_count(:'wk', true)->>'applied' = 'true', 'close week 2 with update');
+select pg_temp.check((select status from units where id = :'r1_id') = 'in_stock', 'scanned out unit back in stock');
+select pg_temp.check((select status from units where id = :'r2_id') = 'out', 'not back stays out');
+select pg_temp.check((select status from units where id = :'r3_id') = 'lost', 'missing → lost');
+select pg_temp.as_user('eeeeeeee-0000-0000-0000-000000000005') \gset
+update orgs set scan_returns = true where id = :'org_a';
+select pg_temp.check(my_orgs()->0->>'scan_returns' = 'false', 'staff cannot change the return setting');
+select pg_temp.as_user('aaaaaaaa-0000-0000-0000-000000000001') \gset
+update orgs set scan_returns = true where id = :'org_a';
+
 -- ═══════════ user B attacks org A ═══════════
 select pg_temp.as_user('bbbbbbbb-0000-0000-0000-000000000002') \gset
 select pg_temp.check((select count(*) from orgs) = 0, 'B sees no orgs');
@@ -443,6 +490,7 @@ select sync_events(jsonb_build_array(jsonb_build_object('kind','unscan','client_
 select pg_temp.check((:'r'::jsonb)->0->>'result' = 'error', 'B cannot void A scans');
 select pg_temp.check((select count(*) from count_scan_voids) = 0, 'B sees no A voids');
 select pg_temp.check((select count(*) from product_stock where org_id = :'org_a') = 0, 'B sees no A stock');
+select pg_temp.check(count_summary(:'wk') is null, 'B gets no A stocktake summary');
 select sync_events(jsonb_build_array(jsonb_build_object(
   'kind','move','client_id',gen_random_uuid(),'org_id',:'org_b','code',:'b_unit','direction','out','vehicle_id',:'van2'))) as r \gset
 select pg_temp.check((:'r'::jsonb)->0->>'result' = 'error', 'B cannot put its units on A vehicle');

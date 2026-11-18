@@ -88,11 +88,12 @@ export function createSyncEngine({
   }
 
   // ───────── recording (works offline) ─────────
-  async function recordMove({ orgId, code: raw, direction, reference, vehicleId }) {
+  async function recordMove({ orgId, code: raw, direction, reference, vehicleId, reloadOut = false }) {
     const code = normalizeCode(raw)
+    const at = now().toISOString()
     const tx = db.transaction(['units', 'outbox'], 'readwrite')
     const unit = await tx.objectStore('units').index('org_code').get([orgId, code])
-    const pred = predictMove(unit, direction)
+    const pred = predictMove(unit, direction, { reloadOut, vehicleId: vehicleId || null, at })
     const ev = {
       client_id: uuid(),
       kind: 'move',
@@ -102,7 +103,8 @@ export function createSyncEngine({
       direction,
       reference: reference?.trim() || null,
       vehicle_id: vehicleId || null,
-      scanned_at: now().toISOString(),
+      reload_out: reloadOut || undefined,
+      scanned_at: at,
       seq: ++seq,
       predicted: pred.result,
       product: unit?.product ?? null,
@@ -465,7 +467,7 @@ export function createSyncEngine({
       .sort((a, b) => a.scanned_at.localeCompare(b.scanned_at) || a.seq - b.seq)
     for (const ev of pending) {
       const u = byCode.get(ev.code)
-      const p = predictMove(u, ev.direction)
+      const p = predictMove(u, ev.direction, { reloadOut: !!ev.reload_out, vehicleId: ev.vehicle_id, at: ev.scanned_at })
       if (p.result === 'ok') byCode.set(ev.code, withMove(u, p.status, ev))
     }
     for (const row of byCode.values()) await units.put(row)
@@ -537,12 +539,14 @@ export function createSyncEngine({
     return db.getAllFromIndex('units', 'org', orgId)
   }
 
-  async function sessionSummary(orgId, sessionId) {
-    const [units, scans] = await Promise.all([
+  async function sessionSummary(orgId, sessionId, { scanReturns = true } = {}) {
+    const [units, scans, sessions] = await Promise.all([
       db.getAllFromIndex('units', 'org', orgId),
       db.getAllFromIndex('scans', 'session', sessionId),
+      db.getAllFromIndex('sessions', 'org', orgId),
     ])
-    return computeSummary(units, scans)
+    const closedStarts = sessions.filter(s => s.status === 'closed' && s.id !== sessionId).map(s => s.created_at)
+    return computeSummary(units, scans, { scanReturns, closedStarts })
   }
 
   async function listSessions(orgId) {

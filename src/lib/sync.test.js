@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { openLocalDb } from './localdb.js'
 import { createSyncEngine } from './sync.js'
-import { computeSummary, needsAttention, isRetryable } from './predict.js'
+import { computeSummary, needsAttention, isRetryable, predictMove } from './predict.js'
 
 const ORG = 'org-1'
 const OFFLINE = { data: null, error: { message: 'TypeError: Failed to fetch', code: '' }, status: 0 }
@@ -293,6 +293,54 @@ test('damaged condition travels with the local unit', async () => {
   const r = await engine.recordMove({ orgId: ORG, code: 'AAAA1111', direction: 'out' })
   assert.equal(r.condition, 'damaged')
   assert.equal(r.condition_note, 'torn')
+})
+
+test('returns not scanned: loading an out unit again is a new load (not same van within 3 h)', async () => {
+  const { engine, server, db } = await setup()
+  server.online = false
+  const a = await engine.recordMove({ orgId: ORG, code: 'AAAA1111', direction: 'out', vehicleId: 'veh-1', reloadOut: true })
+  assert.equal(a.result, 'ok')
+  const b = await engine.recordMove({ orgId: ORG, code: 'AAAA1111', direction: 'out', vehicleId: 'veh-1', reloadOut: true })
+  assert.equal(b.result, 'already', 'same van, minutes later: double scan')
+  const c = await engine.recordMove({ orgId: ORG, code: 'AAAA1111', direction: 'out', vehicleId: 'veh-2', reloadOut: true })
+  assert.equal(c.result, 'ok', 'other van: new load')
+  assert.equal((await db.get('units', 'u1')).vehicle_id, 'veh-2')
+  const d = await engine.recordMove({ orgId: ORG, code: 'AAAA1111', direction: 'out', vehicleId: 'veh-1' })
+  assert.equal(d.result, 'already', 'returns scanned (default): still refused')
+  const sent = (await engine.pendingEvents(ORG, 'move')).find(e => e.client_id === c.client_id)
+  assert.equal(sent.reload_out, true)
+})
+
+test('reload rule: same van after 3 h is a new load', () => {
+  const unit = { status: 'out', vehicle_id: 'v', out_since: '2026-11-17T08:00:00Z' }
+  assert.equal(predictMove(unit, 'out', { reloadOut: true, vehicleId: 'v', at: '2026-11-17T10:59:00Z' }).result, 'already')
+  assert.equal(predictMove(unit, 'out', { reloadOut: true, vehicleId: 'v', at: '2026-11-17T11:01:00Z' }).result, 'ok')
+  assert.equal(predictMove(unit, 'out', { reloadOut: false, vehicleId: 'w' }).result, 'already')
+})
+
+test('stocktake when returns are not scanned: missing vs not back', () => {
+  const units = [
+    { id: 'a', code: 'A', product: 'P', status: 'in_stock' },
+    { id: 'b', code: 'B', product: 'P', status: 'in_stock' },
+    { id: 'c', code: 'C', product: 'P', status: 'out', out_since: '2026-11-01T00:00:00Z', vehicle_id: 'v2' },
+    { id: 'd', code: 'D', product: 'P', status: 'out', out_since: '2026-11-10T00:00:00Z' },
+    { id: 'e', code: 'E', product: 'P', status: 'lost' },
+  ]
+  const scans = [
+    { unit_id: 'a', result: 'ok' },
+    { unit_id: 'd', result: 'ok' },
+    { unit_id: 'e', result: 'ok' },
+  ]
+  const s = computeSummary(units, scans, { scanReturns: false, closedStarts: ['2026-11-05T00:00:00Z', '2026-10-01T00:00:00Z'] })
+  assert.equal(s.expected, 4)
+  assert.equal(s.matched, 2)
+  assert.deepEqual(s.missing.map(m => m.code), ['B'])
+  assert.deepEqual(s.not_back.map(m => [m.code, m.vehicle_id, m.missed]), [['C', 'v2', 1]])
+  assert.equal(s.returned, 1)
+  assert.deepEqual(s.extra.map(m => m.code), ['E'])
+  const r = computeSummary(units, scans) // returns scanned: out units aren't expected; a scanned one is "found"
+  assert.equal(r.expected, 2)
+  assert.deepEqual(r.extra.map(m => m.code), ['D', 'E'])
 })
 
 test('scan into a closed session is refused locally', async () => {

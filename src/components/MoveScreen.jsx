@@ -15,7 +15,12 @@ function entryFor(r, direction, vehicle) {
       if (r.condition === 'damaged')
         // Allowed (maybe it's going for repair), but nobody should load it by accident.
         return makeEntry('warn', r.code, `${verb}: ${r.product}`, `marked DAMAGED: ${r.condition_note || 'no note'}`)
-      return makeEntry('ok', r.code, `${verb}: ${r.product}`, r.previous === 'lost' ? '(was marked lost — found!)' : '')
+      return makeEntry(
+        'ok',
+        r.code,
+        `${verb}: ${r.product}`,
+        r.previous === 'lost' ? '(was marked lost — found!)' : r.previous === 'out' ? '(back from its last job — loaded again)' : '',
+      )
     case 'already':
       return makeEntry('warn', r.code, `Already ${STATUS_LABEL[r.status]}`, r.product)
     case 'retired':
@@ -27,7 +32,7 @@ function entryFor(r, direction, vehicle) {
   }
 }
 
-export default function MoveScreen({ engine, orgId, settings }) {
+export default function MoveScreen({ engine, orgId, settings, scanReturns = true }) {
   const sync = useSyncExternalStore(engine.subscribe, engine.getState)
   const ui = useUI()
   const [moving, setMoving] = useState(null) // entry whose van is being changed
@@ -99,7 +104,7 @@ export default function MoveScreen({ engine, orgId, settings }) {
   }
 
   async function record(code, dir, ref, vehId) {
-    const r = await engine.recordMove({ orgId, code, direction: dir, reference: ref, vehicleId: vehId })
+    const r = await engine.recordMove({ orgId, code, direction: dir, reference: ref, vehicleId: vehId, reloadOut: !scanReturns })
     const veh = vehicles.find(v => v.id === vehId)
     const entry = { ...entryFor(r, dir, veh), clientId: r.client_id }
     // Only a move that changed something can be undone.
@@ -262,7 +267,7 @@ export default function MoveScreen({ engine, orgId, settings }) {
         </div>
 
         <div className="stack">
-        {vehicle && <VehicleLoad vehicle={vehicle} units={units} direction={direction} />}
+        {vehicle && <VehicleLoad vehicle={vehicle} units={units} direction={direction} todayOnly={!scanReturns} />}
         <Section flush title="This session" description="Scans on this device since you opened this screen">
           <div className="session-stats" style={{ padding: '16px 16px 0' }}>
             <Stat label="Moved" value={counts.ok} tone={counts.ok ? 'ok' : ''} />
@@ -313,18 +318,31 @@ export default function MoveScreen({ engine, orgId, settings }) {
 
 // What's on the selected vehicle right now. Loading: what's on board.
 // Unloading: what still has to come back off it.
-function VehicleLoad({ vehicle, units, direction }) {
-  const on = units.filter(u => u.status === 'out' && u.vehicle_id === vehicle.id).sort((a, b) => a.code.localeCompare(b.code))
+// When returns aren't scanned, "out" never ends until the stocktake, so only
+// today's loads are shown.
+function VehicleLoad({ vehicle, units, direction, todayOnly }) {
+  const today = new Date().toDateString()
+  const on = units
+    .filter(u => u.status === 'out' && u.vehicle_id === vehicle.id)
+    .filter(u => !todayOnly || (u.out_since && new Date(u.out_since).toDateString() === today))
+    .sort((a, b) => a.code.localeCompare(b.code))
   const byProduct = on.reduce((m, u) => ((m[u.product] ??= []).push(u), m), {})
   return (
     <Section
       flush
       title={
         <span className="row" style={{ gap: 8 }}>
-          <Icon name="truck" /> {direction === 'out' ? `On ${vehicle.name} now` : `Still out with ${vehicle.name}`} ({on.length})
+          <Icon name="truck" />{' '}
+          {todayOnly ? `Loaded on ${vehicle.name} today` : direction === 'out' ? `On ${vehicle.name} now` : `Still out with ${vehicle.name}`} ({on.length})
         </span>
       }
-      description={direction === 'out' ? 'Everything checked out on this vehicle and not back yet' : 'Scan each one as it comes off. What’s left here didn’t come back.'}
+      description={
+        todayOnly
+          ? 'Everything scanned onto this vehicle today'
+          : direction === 'out'
+            ? 'Everything checked out on this vehicle and not back yet'
+            : 'Scan each one as it comes off. What’s left here didn’t come back.'
+      }
     >
       <div data-testid="vehicle-load">
         {on.length === 0 ? (
