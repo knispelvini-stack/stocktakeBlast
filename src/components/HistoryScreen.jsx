@@ -106,7 +106,10 @@ export default function HistoryScreen({ engine, orgId, settings, initialCode = '
   function exportCsv() {
     const all = [
       ...pending.map(p => ({ ...p, applied: null, user_label: 'this device', status: 'pending sync' })),
-      ...(rows ?? []).map(r => ({ ...r, status: r.applied ? 'applied' : 'not applied (late)' })),
+      ...(rows ?? []).map(r => ({
+        ...r,
+        status: !r.applied ? 'not applied (late)' : r.corrects_id ? 'undo of an earlier scan' : r.undone ? 'applied, later undone' : 'applied',
+      })),
     ]
     const head = ['scanned_at', 'code', 'product', 'direction', 'vehicle', 'reference', 'user', 'status']
     const esc = v => `"${String(v ?? '').replace(/"/g, '""')}"`
@@ -127,7 +130,9 @@ export default function HistoryScreen({ engine, orgId, settings, initialCode = '
     p =>
       (!filters.code.trim() || p.code === filters.code.trim().toUpperCase()) &&
       (!filters.direction || p.direction === filters.direction) &&
-      (!filters.vehicle || p.vehicle_id === filters.vehicle),
+      (!filters.vehicle || p.vehicle_id === filters.vehicle) &&
+      (!filters.reference.trim() ||
+        [p.code, p.product, p.reference, vName(p)].some(x => (x || '').toLowerCase().includes(filters.reference.trim().toLowerCase()))),
   )
 
   const hasFilters = Object.values(filters).some(v => String(v).trim())
@@ -223,9 +228,17 @@ export default function HistoryScreen({ engine, orgId, settings, initialCode = '
               ))}
             </select>
           </label>
-          <label>
-            Reference
-            <input placeholder="e.g. Van 2" value={filters.reference} onChange={e => setFilters({ ...filters, reference: e.target.value })} />
+          <label className="filter-search">
+            Search
+            <div className="input-icon">
+              <Icon name="search" size={16} />
+              <input
+                placeholder="Product, code, person, van, job…"
+                value={filters.reference}
+                onChange={e => setFilters({ ...filters, reference: e.target.value })}
+                data-testid="history-search"
+              />
+            </div>
           </label>
           <label>
             From
@@ -283,7 +296,7 @@ export default function HistoryScreen({ engine, orgId, settings, initialCode = '
                   </tr>
                 ) : (
                   rows.map(r => (
-                    <tr key={r.id} className={r.applied ? '' : 'late-row'}>
+                    <tr key={r.id} className={!r.applied ? 'late-row' : r.undone ? 'row-undone' : ''}>
                       <td className="muted">{formatDateTime(r.scanned_at)}</td>
                       <td>
                         <button className="link mono" onClick={() => setFilters(f => ({ ...f, code: r.code }))}>
@@ -296,6 +309,12 @@ export default function HistoryScreen({ engine, orgId, settings, initialCode = '
                         {!r.applied && (
                           <span title={RESULT_TEXT.late}>
                             <Badge tone="error">not applied</Badge>
+                          </span>
+                        )}
+                        {r.applied && r.corrects_id && <Badge tone="neutral">undo</Badge>}
+                        {r.applied && r.undone && (
+                          <span title="This scan was undone by the device that made it">
+                            <Badge tone="warn">undone</Badge>
                           </span>
                         )}
                       </td>

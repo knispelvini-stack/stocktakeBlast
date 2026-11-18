@@ -9,8 +9,10 @@ driven by any USB/Bluetooth barcode scanner in keyboard (HID) mode — no driver
   update stock (missing → lost, found → in stock).
 - **Products & labels** — create products, generate N unique unit codes, print Code 128 labels on
   A4 sheets (Avery L7159, 3 × 8) or a 50 × 25 mm thermal roll.
-- **History** — every movement with who/when/reference, filter by unit (scan a label), direction,
-  reference and dates, CSV export; scans waiting to sync and sync conflicts are shown on top.
+- **History** — every movement with who/when/reference; search by product, code (or part of it),
+  person, van or job; filter by unit (scan a label), direction, vehicle and dates; CSV export; scans
+  waiting to sync and sync conflicts are shown on top.
+- **Undo a scan / change van** — wrong item or wrong van: fix it from the scan list (see below).
 - **Scanner** — setup checklist, live test and speed measurement to tune detection.
 - **Works offline** — keep scanning with no connection; everything syncs when it's back.
 
@@ -71,6 +73,20 @@ The owner registers vehicles in **Settings → Vehicles** (name, optional plate)
 - Unit codes can never start with `VEH-`, so a scan is never ambiguous. Vehicles are never deleted
   (deactivate instead) and only the owner can add or edit them.
 
+## Fixing mistakes
+
+- **Undo** (Check out / in → the scan list): a scan not synced yet is simply taken out of the
+  queue — it never reaches the server. A synced scan gets a *correcting* movement (the opposite
+  direction, linked to the original by `corrects_id`); undoing a check-in puts the unit back on the
+  same van/reference. Nothing is deleted: Activity shows the original as **undone** and the fix as
+  **undo**. Only the device that made the scan can undo it, and only while nobody has moved the unit
+  since (otherwise the undo is recorded as *not applied* and shows under Needs attention).
+- **Change van**: undo + check out onto the van you pick, in one step.
+- **Edit product**: name and SKU only. Category, theme, size and code scheme are fixed once
+  created — make a new product instead.
+- **Retire / restore** a unit: Inventory → product → Retire. Goes through `set_unit_status()` and is
+  logged in `unit_status_log`.
+
 ## How the scanner works
 
 A scanner in HID mode types the code very fast and presses Enter. `src/lib/scanDetector.js`
@@ -124,9 +140,10 @@ Limits worth knowing:
 |---|---|---|
 | `orgs`, `org_members` | the company and its members (owner + PIN devices, with display name) | via `join_with_pin()` / owner RPCs; `create_org()` is SQL-only |
 | `org_pins`, `pin_attempts` | bcrypt PIN hash, attempt log for throttling | **none** (no client access) |
-| `products` | product types (name, optional SKU) | insert/update by members, delete by owner |
-| `units` | one row per physical item, `status`: in_stock / out / lost / retired | created via `generate_units()`; members may update (retire); owner deletes |
-| `movements` | audit trail of every check out/in (`scanned_at`, `applied`) | **none** — only via `sync_events()` / `close_count()` |
+| `products` | product types (name, optional SKU, code scheme) | insert by members; update of **name and SKU only**; never deleted |
+| `units` | one row per physical item, `status`: in_stock / out / lost / retired | **none** — created via `generate_units()`, status via moves / `close_count()` / `set_unit_status()`; never deleted |
+| `movements` | audit trail of every check out/in (`scanned_at`, `applied`, `vehicle_id`, `corrects_id`) | **none** — only via `sync_events()` / `close_count()` |
+| `unit_status_log` | who retired / restored which unit | **none** — only via `set_unit_status()` |
 | `count_sessions`, `count_scans` | stocktakes and each scan | via `sync_events()` (session insert also allowed) |
 
 Read RPCs used by the offline cache and History: `my_orgs`, `pull_units`, `pull_sessions`,

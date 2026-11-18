@@ -208,10 +208,10 @@ select pg_temp.check(pg_temp.fails(format('insert into products (org_id, name, c
 select pg_temp.check(next_codes(:'ban45', 2) = '["BAN-PAW45-01", "BAN-PAW45-02"]'::jsonb, 'next_codes preview');
 select string_agg(code, ',' order by code) as codes from generate_units(:'ban45', 3) \gset
 select pg_temp.check(:'codes' = 'BAN-PAW45-01,BAN-PAW45-02,BAN-PAW45-03', 'generate BAN-PAW45-01..03');
-update units set status = 'retired' where code = 'BAN-PAW45-03';
+select pg_temp.check(set_unit_status((select id from units where code = 'BAN-PAW45-03'), 'retired')->>'result' = 'ok', 'retire via set_unit_status');
 select code as c_next from generate_units(:'ban45', 1) \gset
 select pg_temp.check(:'c_next' = 'BAN-PAW45-04', 'retired numbers are never reused');
-delete from units where code = 'BAN-PAW45-03'; -- RLS: no delete policy, so 0 rows
+select pg_temp.check(pg_temp.fails('delete from units where code = ''BAN-PAW45-03'''), 'units delete not granted');
 select pg_temp.check((select count(*) from units where code = 'BAN-PAW45-03') = 1, 'retired unit row is kept');
 delete from products where id = :'ban45';
 select pg_temp.check((select count(*) from products where id = :'ban45') = 1, 'products cannot be deleted');
@@ -272,6 +272,67 @@ select sync_events(jsonb_build_array(jsonb_build_object(
   'kind','move','client_id',gen_random_uuid(),'org_id',:'org_a','code',:'vu1','direction','in','vehicle_id',:'van2'))) as r \gset
 select pg_temp.check((:'r'::jsonb)->0->>'result' = 'ok', 'staff checks in from a vehicle');
 
+-- ═══════════ corrections: no direct writes, undo, search ═══════════
+-- (still staff device Eva, a PIN member of A)
+select id as cu_id, code as cu from generate_units(:'prod_a', 1) \gset
+select pg_temp.check(pg_temp.fails(format('update units set code = %L where id = %L', 'HACKED', :'cu_id')), 'members cannot change a unit code');
+select pg_temp.check((select code = :'cu' and status = 'in_stock' from units where id = :'cu_id'), 'unit untouched');
+select pg_temp.check(pg_temp.fails(format('update units set status = %L where id = %L', 'lost', :'cu_id')), 'units update is not granted at all');
+select pg_temp.check(pg_temp.fails(format('select set_unit_status(%L, %L)', :'cu_id', 'out')), 'set_unit_status only retires/restores');
+select pg_temp.check(pg_temp.fails(format('select set_unit_status(%L, %L)', :'cu_id', 'in_stock')), 'cannot "restore" a unit that is not retired');
+select pg_temp.check(set_unit_status(:'cu_id', 'retired')->>'result' = 'ok', 'staff retires a unit');
+select pg_temp.check(set_unit_status(:'cu_id', 'in_stock')->>'result' = 'ok', 'staff restores it');
+select pg_temp.check((select count(*) from unit_status_log where unit_id = :'cu_id') = 2, 'retire/restore logged');
+select pg_temp.check(pg_temp.fails(format('insert into unit_status_log (org_id, unit_id, from_status, to_status) values (%L, %L, %L, %L)', :'org_a', :'cu_id', 'x', 'y')), 'status log is not writable');
+update products set name = 'Castle 4x4 (blue)', sku = 'C44' where id = :'prod_a';
+select pg_temp.check((select name from products where id = :'prod_a') = 'Castle 4x4 (blue)', 'product name/SKU editable');
+select pg_temp.check(pg_temp.fails(format('update products set code_stem = %L where id = %L', 'ZZZ', :'prod_a')), 'product code stem not editable');
+select pg_temp.check(pg_temp.fails(format('update products set category = %L where id = %L', 'BAN', :'prod_a')), 'product category not editable');
+-- undo a check-out onto a van
+\set u1 '33333333-3333-3333-3333-333333333331'
+\set u1x '33333333-3333-3333-3333-333333333332'
+select sync_events(jsonb_build_array(jsonb_build_object(
+  'kind','move','client_id',:'u1','org_id',:'org_a','code',:'cu','direction','out','vehicle_id',:'van2','reference','Job 7'))) as r \gset
+select sync_events(jsonb_build_array(jsonb_build_object(
+  'kind','move','client_id',:'u1x','org_id',:'org_a','code',:'cu','direction','in','corrects',:'u1'))) as r \gset
+select pg_temp.check((:'r'::jsonb)->0->>'result' = 'ok' and (select status from units where id = :'cu_id') = 'in_stock', 'undo check-out: back in stock');
+select pg_temp.check((select corrects_id from movements where id = :'u1x') = :'u1'::uuid, 'undo linked to original');
+select pg_temp.check((select count(*) from movements where unit_id = :'cu_id') = 2, 'nothing deleted');
+select pg_temp.check((activity_feed(:'org_a', p_code => :'cu')->1->>'undone')::boolean, 'history marks original as undone');
+select sync_events(jsonb_build_array(jsonb_build_object(
+  'kind','move','client_id',:'u1x','org_id',:'org_a','code',:'cu','direction','in','corrects',:'u1'))) as r \gset
+select pg_temp.check((:'r'::jsonb)->0->>'result' = 'ok' and (select count(*) from movements where unit_id = :'cu_id') = 2, 'undo retry is idempotent');
+select sync_events(jsonb_build_array(jsonb_build_object(
+  'kind','move','client_id',gen_random_uuid(),'org_id',:'org_a','code',:'cu','direction','in','corrects',:'u1'))) as r \gset
+select pg_temp.check((:'r'::jsonb)->0->>'result' = 'already', 'cannot undo twice');
+-- undo a check-in: goes back out on the same van/reference (separate transactions = distinct times)
+\set u2 '33333333-3333-3333-3333-333333333333'
+select sync_events(jsonb_build_array(jsonb_build_object('kind','move','client_id',gen_random_uuid(),'org_id',:'org_a','code',:'cu','direction','out','vehicle_id',:'van2','reference','Job 8')))->0->>'result' as r1 \gset
+select sync_events(jsonb_build_array(jsonb_build_object('kind','move','client_id',:'u2','org_id',:'org_a','code',:'cu','direction','in')))->0->>'result' as r2 \gset
+select sync_events(jsonb_build_array(jsonb_build_object('kind','move','client_id',gen_random_uuid(),'org_id',:'org_a','code',:'cu','direction','out','corrects',:'u2')))->0->>'result' as r3 \gset
+select pg_temp.check(:'r1' = 'ok' and :'r2' = 'ok' and :'r3' = 'ok', 'out, in, undo-in all ok');
+select pg_temp.check((select e->>'vehicle_id' = :'van2' and e->>'last_ref' = 'Job 8' and e->>'status' = 'out'
+                      from jsonb_array_elements(pull_units(:'org_a')) e where e->>'code' = :'cu'), 'undo check-in: back out on the same van');
+-- undo after someone else moved it: not applied
+\set u3 '33333333-3333-3333-3333-333333333334'
+select sync_events(jsonb_build_array(jsonb_build_object('kind','move','client_id',:'u3','org_id',:'org_a','code',:'cu','direction','in')))->0->>'result' as r1 \gset
+select sync_events(jsonb_build_array(jsonb_build_object('kind','move','client_id',gen_random_uuid(),'org_id',:'org_a','code',:'cu','direction','out')))->0->>'result' as r2 \gset
+select sync_events(jsonb_build_array(jsonb_build_object('kind','move','client_id',gen_random_uuid(),'org_id',:'org_a','code',:'cu','direction','out','corrects',:'u3')))->0->>'result' as r3 \gset
+select pg_temp.check(:'r3' = 'late', 'undo after a later move is not applied');
+select pg_temp.check(pg_temp.fails(format('select _sync_move(%L::jsonb)', '{}')), 'still internal');
+-- another member cannot undo Eva's scan
+select pg_temp.as_user('aaaaaaaa-0000-0000-0000-000000000001') \gset
+select sync_events(jsonb_build_array(jsonb_build_object(
+  'kind','move','client_id',gen_random_uuid(),'org_id',:'org_a','code',:'cu','direction','out','corrects',:'u2'))) as r \gset
+select pg_temp.check((:'r'::jsonb)->0->>'result' = 'error', 'only the device that scanned can undo');
+-- search
+select pg_temp.check(jsonb_array_length(activity_feed(:'org_a', p_reference => 'job 8')) >= 1, 'search by reference');
+select pg_temp.check((select bool_and(e->>'product' = 'Castle 4x4 (blue)') from jsonb_array_elements(activity_feed(:'org_a', p_reference => '4x4 (BLUE')) e), 'search by product name');
+select pg_temp.check(jsonb_array_length(activity_feed(:'org_a', p_reference => 'BAN-PAW45')) >= 1, 'search by partial code');
+select pg_temp.check(jsonb_array_length(activity_feed(:'org_a', p_reference => 'eva')) >= 5, 'search by person');
+select pg_temp.check(jsonb_array_length(activity_feed(:'org_a', p_reference => 'van 2')) >= 3, 'search by vehicle name');
+select pg_temp.check(jsonb_array_length(activity_feed(:'org_a', p_reference => '%')) = 0, 'search treats % literally');
+
 -- ═══════════ user B attacks org A ═══════════
 select pg_temp.as_user('bbbbbbbb-0000-0000-0000-000000000002') \gset
 select pg_temp.check((select count(*) from orgs) = 0, 'B sees no orgs');
@@ -304,9 +365,14 @@ select pg_temp.check(pg_temp.fails(format('select add_unit_with_code(%L, %L)', :
 select pg_temp.check(pg_temp.fails(format('select next_codes(%L)', :'ban45')), 'B cannot preview A codes');
 select pg_temp.check(pg_temp.fails(format('select pull_vehicles(%L)', :'org_a')), 'B cannot list A vehicles');
 select pg_temp.check(pg_temp.fails(format('select activity_feed(%L)', :'org_a')), 'B cannot read A activity_feed');
+select pg_temp.check(pg_temp.fails(format('select set_unit_status(%L, %L)', :'cu_id', 'retired')), 'B cannot retire A units');
+select pg_temp.check((select count(*) from unit_status_log) = 0, 'B sees no A status log');
 select pg_temp.check((select count(*) from vehicles) = 0, 'B sees no vehicles of A');
 insert into products (org_id, name) values (:'org_b', 'B thing') returning id as b_prod \gset
 select code as b_unit from generate_units(:'b_prod', 1) \gset
+select sync_events(jsonb_build_array(jsonb_build_object(
+  'kind','move','client_id',gen_random_uuid(),'org_id',:'org_b','code',:'b_unit','direction','in','corrects',:'u2'))) as r \gset
+select pg_temp.check((:'r'::jsonb)->0->>'result' = 'error', 'B cannot undo an A movement');
 select sync_events(jsonb_build_array(jsonb_build_object(
   'kind','move','client_id',gen_random_uuid(),'org_id',:'org_b','code',:'b_unit','direction','out','vehicle_id',:'van2'))) as r \gset
 select pg_temp.check((:'r'::jsonb)->0->>'result' = 'error', 'B cannot put its units on A vehicle');

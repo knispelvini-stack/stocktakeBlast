@@ -30,6 +30,7 @@ const PATHS = {
   arrowUp: <path d="M12 19V5M5 12l7-7 7 7" />,
   arrowDown: <path d="M12 5v14M19 12l-7 7-7-7" />,
   plus: <path d="M12 5v14M5 12h14" />,
+  edit: <path d="M4 20h4L19 9a2.8 2.8 0 0 0-4-4L4 16zM13.5 6.5l4 4" />,
   printer: (
     <>
       <path d="M6 9V3h12v6M6 18H4a1 1 0 0 1-1-1v-6a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v6a1 1 0 0 1-1 1h-2" />

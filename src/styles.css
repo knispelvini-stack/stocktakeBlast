@@ -386,6 +386,10 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .att-list { list-style: none; margin: 0; padding: 0; }
 .att-list li { display: flex; justify-content: space-between; gap: 12px; padding: 12px 20px; border-top: 1px solid var(--border); flex-wrap: wrap; align-items: center; }
 .small-btn { min-height: 32px; padding: 4px 10px; font-size: 13px; }
+.feed-actions { display: inline-flex; gap: 4px; }
+.feed-panel .feed li .time { flex-wrap: wrap; justify-content: flex-end; row-gap: 2px; max-width: 100%; }
+.feed li.undone .feed-title, .row-undone { color: var(--text-3); }
+.row-undone td:nth-child(-n+2) { text-decoration: line-through; text-decoration-color: var(--text-3); }
 
 .where { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
 .where-vehicle { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; }
@@ -454,6 +458,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
   .settings-nav button { flex: none; }
   /* finger-sized tap areas for text links and breadcrumbs, same look */
   .link, .breadcrumb { min-height: 40px; padding: 8px 6px; margin: -8px -6px; }
+  .feed-actions .small-btn { min-height: 40px; }
   .breadcrumb { margin-bottom: -4px; }
   .table td .link { margin: -8px 0; }
 }

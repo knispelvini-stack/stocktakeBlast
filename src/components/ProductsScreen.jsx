@@ -54,6 +54,7 @@ export default function ProductsScreen({ engine, orgId, onShowHistory }) {
         engine={engine}
         orgId={orgId}
         product={product}
+        onChanged={load}
         onShowHistory={onShowHistory}
         onBack={() => {
           setSelected(null)
@@ -209,7 +210,7 @@ export default function ProductsScreen({ engine, orgId, onShowHistory }) {
   )
 }
 
-function ProductDetail({ engine, orgId, product, onBack, onShowHistory }) {
+function ProductDetail({ engine, orgId, product, onBack, onChanged, onShowHistory }) {
   const ui = useUI()
   const [units, setUnits] = useState(null)
   const [count, setCount] = useState(1)
@@ -219,6 +220,7 @@ function ProductDetail({ engine, orgId, product, onBack, onShowHistory }) {
   const [printing, setPrinting] = useState(null)
   const [showRetired, setShowRetired] = useState(false)
   const [adding, setAdding] = useState(false)
+  const [editing, setEditing] = useState(false)
   const [manualCode, setManualCode] = useState('')
   const [nextCodes, setNextCodes] = useState([])
   const manual = product.category === 'BLO'
@@ -286,7 +288,7 @@ function ProductDetail({ engine, orgId, product, onBack, onShowHistory }) {
       })
       if (!ok) return
     }
-    const { error } = await supabase.from('units').update({ status }).eq('id', unit.id)
+    const { error } = await supabase.rpc('set_unit_status', { p_unit: unit.id, p_status: status })
     if (error) return ui.toast(error.message, 'error')
     ui.toast(status === 'retired' ? `${unit.code} retired.` : `${unit.code} restored to stock.`, 'ok')
     load()
@@ -322,6 +324,9 @@ function ProductDetail({ engine, orgId, product, onBack, onShowHistory }) {
         }
         actions={
           <>
+            <button className="ghost" onClick={() => setEditing(true)} data-testid="edit-product">
+              <Icon name="edit" /> Edit
+            </button>
             <button className="secondary" disabled={!visible.length} onClick={() => setPrinting(toPrint.length ? toPrint : visible)}>
               <Icon name="printer" /> {toPrint.length ? `Print ${toPrint.length} selected` : `Print all (${visible.length})`}
             </button>
@@ -488,6 +493,67 @@ function ProductDetail({ engine, orgId, product, onBack, onShowHistory }) {
           </Modal>
         </form>
       )}
+      {editing && (
+        <EditProductModal
+          product={product}
+          onClose={() => setEditing(false)}
+          onSaved={async () => {
+            setEditing(false)
+            await onChanged()
+            engine.pullUnits(orgId).catch(() => {}) // product names are cached with the units
+          }}
+        />
+      )}
     </>
+  )
+}
+
+// Only name and SKU can change: category, theme, size and code scheme are
+// fixed once created (labels may already be printed). The database enforces it.
+function EditProductModal({ product, onClose, onSaved }) {
+  const ui = useUI()
+  const [name, setName] = useState(product.name)
+  const [sku, setSku] = useState(product.sku ?? '')
+  const [busy, setBusy] = useState(false)
+  async function save(e) {
+    e.preventDefault()
+    setBusy(true)
+    const { error } = await supabase
+      .from('products')
+      .update({ name: name.trim(), sku: sku.trim() || null })
+      .eq('id', product.id)
+    setBusy(false)
+    if (error) return ui.toast(error.code === '23505' ? 'Another product already uses that SKU.' : error.message, 'error')
+    ui.toast('Product updated.', 'ok')
+    onSaved()
+  }
+  return (
+    <Modal
+      title="Edit product"
+      description="Codes and labels don’t change. To change the theme or size, create a new product."
+      onClose={onClose}
+      size="sm"
+      footer={
+        <>
+          <button className="ghost" type="button" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="primary" form="edit-product" disabled={busy || !name.trim()}>
+            {busy ? 'Saving…' : 'Save'}
+          </button>
+        </>
+      }
+    >
+      <form id="edit-product" className="stack" onSubmit={save}>
+        <label>
+          Name
+          <input value={name} onChange={e => setName(e.target.value)} maxLength={80} required />
+        </label>
+        <label>
+          SKU <span className="hint">optional</span>
+          <input value={sku} onChange={e => setSku(e.target.value)} maxLength={40} />
+        </label>
+      </form>
+    </Modal>
   )
 }
