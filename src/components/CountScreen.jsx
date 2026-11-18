@@ -4,9 +4,9 @@ import { useScanner } from '../lib/useScanner.js'
 import { beep } from '../lib/beep.js'
 import { ScanInput, ScanFlash, ScanFeed, makeEntry } from './ScanParts.jsx'
 import Icon from './ui/Icon.jsx'
-import { PageHeader, Section, Stat, EmptyState, Badge, StatusBadge, Modal, useUI, formatDateTime } from './ui/ui.jsx'
+import { PageHeader, Section, Stat, EmptyState, Badge, StatusBadge, Modal, useUI, formatDateTime, timeAgo } from './ui/ui.jsx'
 
-export default function CountScreen({ engine, orgId, settings }) {
+export default function CountScreen({ engine, orgId, settings, scanReturns = true }) {
   const sync = useSyncExternalStore(engine.subscribe, engine.getState)
   const [sessions, setSessions] = useState(null)
   const [activeId, setActiveId] = useState(null)
@@ -29,7 +29,16 @@ export default function CountScreen({ engine, orgId, settings }) {
 
   const active = sessions?.find(s => s.id === activeId)
   if (active) {
-    return <CountSession engine={engine} orgId={orgId} session={active} settings={settings} onBack={() => setActiveId(null)} />
+    return (
+      <CountSession
+        engine={engine}
+        orgId={orgId}
+        session={active}
+        settings={settings}
+        scanReturns={scanReturns}
+        onBack={() => setActiveId(null)}
+      />
+    )
   }
 
   const newButton = (
@@ -110,7 +119,7 @@ export default function CountScreen({ engine, orgId, settings }) {
   )
 }
 
-function CountSession({ engine, orgId, session, settings, onBack }) {
+function CountSession({ engine, orgId, session, settings, scanReturns, onBack }) {
   const ui = useUI()
   const sync = useSyncExternalStore(engine.subscribe, engine.getState)
   const [summary, setSummary] = useState(null)
@@ -119,6 +128,10 @@ function CountSession({ engine, orgId, session, settings, onBack }) {
   const [closing, setClosing] = useState(false)
   const [apply, setApply] = useState(true)
   const closed = session.status === 'closed'
+  const [vehicles, setVehicles] = useState([])
+  useEffect(() => {
+    engine.listVehicles(orgId).then(setVehicles)
+  }, [engine, orgId])
 
   // Other devices' scans for this session (when online).
   useEffect(() => {
@@ -126,10 +139,13 @@ function CountSession({ engine, orgId, session, settings, onBack }) {
   }, [engine, session.id, session.pending])
 
   const recompute = useCallback(async () => {
-    const [s, p] = await Promise.all([engine.sessionSummary(orgId, session.id), engine.pendingForSession(session.id)])
+    const [s, p] = await Promise.all([
+      engine.sessionSummary(orgId, session.id, { scanReturns }),
+      engine.pendingForSession(session.id),
+    ])
     setSummary(s)
     setPendingHere(p)
-  }, [engine, orgId, session.id])
+  }, [engine, orgId, session.id, scanReturns])
 
   useEffect(() => {
     recompute()
@@ -173,6 +189,8 @@ function CountSession({ engine, orgId, session, settings, onBack }) {
     const base = { clientId: r.client_id, removable: ['ok', 'unknown'].includes(r.result) }
     if (r.result === 'ok') {
       if (r.unit_status === 'in_stock') push({ ...makeEntry('ok', r.code, r.product), ...base })
+      else if (r.unit_status === 'out' && !scanReturns)
+        push({ ...makeEntry('ok', r.code, r.product, 'back from a job'), ...base })
       else push({ ...makeEntry('warn', r.code, `Found: ${r.product}`, `system says "${r.unit_status}"`), ...base })
     } else if (r.result === 'duplicate') {
       push({ ...makeEntry('warn', r.code, 'Already counted', r.product), ...base })
@@ -219,7 +237,9 @@ function CountSession({ engine, orgId, session, settings, onBack }) {
     await engine.refreshOrg(orgId)
     ui.toast(
       data.applied
-        ? `Stocktake finished. ${data.lost} marked lost, ${data.found} returned to stock.`
+        ? `Stocktake finished. ${data.lost} marked lost, ${data.found} returned to stock${
+            !scanReturns && summary?.not_back.length ? `, ${summary.not_back.length} not back (still out)` : ''
+          }.`
         : 'Stocktake finished. Stock levels were not changed.',
       'ok',
     )
@@ -265,16 +285,22 @@ function CountSession({ engine, orgId, session, settings, onBack }) {
             <strong>
               {summary.matched} of {summary.expected}
             </strong>
-            <span className="muted">expected units counted</span>
+            <span className="muted">{scanReturns ? 'expected units counted' : 'units counted (in stock + loaded)'}</span>
             <div className="progress">
               <div style={{ width: `${pct}%` }} />
             </div>
             <strong>{pct}%</strong>
           </div>
           <div className="stats">
-            <Stat label="Expected in stock" value={summary.expected} />
-            <Stat label="Counted" value={summary.matched} tone={summary.matched ? 'ok' : ''} />
+            <Stat label={scanReturns ? 'Expected in stock' : 'Expected'} value={summary.expected} />
+            <Stat
+              label="Counted"
+              value={summary.matched}
+              hint={summary.returned ? `${summary.returned} back from jobs` : undefined}
+              tone={summary.matched ? 'ok' : ''}
+            />
             <Stat label="Missing" value={summary.missing.length} tone={summary.missing.length ? 'error' : ''} />
+            {!scanReturns && <Stat label="Not back" value={summary.not_back.length} tone={summary.not_back.length ? 'warn' : ''} />}
             <Stat label="Found (not expected)" value={summary.extra.length} tone={summary.extra.length ? 'warn' : ''} />
             <Stat label="Unknown codes" value={summary.unknown.length} tone={summary.unknown.length ? 'error' : ''} />
           </div>
@@ -303,10 +329,11 @@ function CountSession({ engine, orgId, session, settings, onBack }) {
 
       {summary && (
         <div className="grid2">
-          <UnitList title="Missing" description="Expected in stock but not scanned yet" tone="error" items={summary.missing} empty="Nothing missing." />
+          <UnitList title="Missing" description="Was in the warehouse, not scanned yet" tone="error" items={summary.missing} empty="Nothing missing." />
+          <NotBack items={summary.not_back} vehicles={vehicles} scanReturns={scanReturns} />
           <UnitList
             title="Found"
-            description="Scanned, but the system had them as out or lost"
+            description={scanReturns ? 'Scanned, but the system had them as out or lost' : 'Scanned, but the system had them as lost or retired'}
             tone="warn"
             items={summary.extra}
             empty="None."
@@ -340,13 +367,20 @@ function CountSession({ engine, orgId, session, settings, onBack }) {
           }
         >
           <p className="muted">
-            {summary?.missing.length ?? 0} units were not scanned and {summary?.extra.length ?? 0} were found that the
-            system had as out or lost.
+            {summary?.missing.length ?? 0} unit{summary?.missing.length === 1 ? ' was' : 's were'} in stock but not scanned
+            {!scanReturns && summary?.not_back.length ? `, ${summary.not_back.length} loaded but not seen since` : ''} and{' '}
+            {summary?.extra.length ?? 0} were found that the system had as {scanReturns ? 'out or lost' : 'lost'}.
           </p>
           <label className="check">
             <input type="checkbox" checked={apply} onChange={e => setApply(e.target.checked)} />
             <span>
-              Update stock: mark missing units as <b>lost</b> and found units as <b>in stock</b>.
+              Update stock: mark missing units as <b>lost</b> and every scanned unit as <b>in stock</b>.
+              {!scanReturns && (
+                <>
+                  {' '}
+                  Units not back stay <b>out</b> (on their last vehicle) — they show again in the next stocktake.
+                </>
+              )}
             </span>
           </label>
           <div className="notice warn">
@@ -395,6 +429,50 @@ function UnitList({ title, description, tone, items, empty, showStatus }) {
             </div>
           </div>
         ))
+      )}
+    </section>
+  )
+}
+
+// Out units nobody scanned: still at a job, or lost somewhere after loading.
+function NotBack({ items, vehicles, scanReturns }) {
+  if (scanReturns) return null // out units are on a job; Check IN tracks returns
+  const vName = id => vehicles.find(v => v.id === id)?.name
+  return (
+    <section className="panel unit-list warn" data-testid="not-back">
+      <div className="panel-head">
+        <div>
+          <h2>
+            Not back <span className="muted">({items.length})</span>
+          </h2>
+          <p className="panel-desc">Loaded and not scanned since. Missed in 2+ stocktakes = probably lost.</p>
+        </div>
+      </div>
+      {items.length === 0 ? (
+        <p className="muted small">Everything that went out has been seen.</p>
+      ) : (
+        <ul className="list">
+          {items.map(it => (
+            <li key={it.code}>
+              <div className="li-main">
+                <span className="li-title mono">{it.code}</span>
+                <span className="li-sub">
+                  {it.product}
+                  {it.vehicle_id && vName(it.vehicle_id) ? ` · ${vName(it.vehicle_id)}` : ''}
+                  {it.reference ? ` · ${it.reference}` : ''}
+                  {it.out_since ? ` · loaded ${timeAgo(it.out_since)}` : ''}
+                </span>
+              </div>
+              <div className="li-end">
+                {it.missed > 0 && (
+                  <Badge tone={it.missed >= 2 ? 'error' : 'warn'}>
+                    missed {it.missed} stocktake{it.missed === 1 ? '' : 's'}
+                  </Badge>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
       )}
     </section>
   )

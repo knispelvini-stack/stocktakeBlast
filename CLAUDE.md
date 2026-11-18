@@ -41,6 +41,9 @@ read by keyboard-wedge (HID) USB/Bluetooth scanners. See README.md for the full 
 - Unit condition (`ok`/`damaged`) is separate from status; change it only via `set_unit_condition()`.
   "Available" = `in_stock` and `ok`. Stocktake scans are never deleted: wrong ones are voided
   (`count_scan_voids`); every count (summary, close, local `computeSummary`) must ignore voided scans.
+- `orgs.scan_returns = false` (company doesn't scan returns): re-loading an out unit is a new load
+  (same vehicle < 3 h = double scan), same rule in `_sync_move` and `predictMove`; the stocktake
+  expects in-stock + out units and splits unscanned into missing / not back.
 - Corrections never delete or edit a movement: an undo is a new movement with `corrects_id`
   (`undoMove` in sync.js; unsynced scans are just removed from the outbox).
 - Prefer migrations Supabase won't flag as destructive (avoid `DROP`): add a new function instead of

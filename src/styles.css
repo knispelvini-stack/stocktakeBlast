@@ -390,6 +390,7 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .small-btn { min-height: 32px; padding: 4px 10px; font-size: 13px; }
 .feed-actions { display: inline-flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
 .row-highlight td { background: var(--warn-bg); }
+.li-title.mono { white-space: nowrap; }
 .unit-actions { display: grid; gap: 8px; }
 .unit-actions button { justify-content: flex-start; }
 .file-btn { display: inline-flex; flex-direction: row; align-items: center; gap: 8px; cursor: pointer; font-size: 14px; font-weight: 600; padding: 8px 14px; border-radius: var(--radius-sm); min-height: var(--control); border: 1px solid var(--border-strong); }

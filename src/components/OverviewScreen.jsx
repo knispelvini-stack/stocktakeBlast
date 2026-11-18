@@ -5,13 +5,14 @@ import { PageHeader, Section, Stat, EmptyState, Badge, timeAgo } from './ui/ui.j
 
 // Everything here comes from the device's local cache, so the overview also
 // works offline. Numbers refresh whenever the sync engine changes data.
-export default function OverviewScreen({ engine, orgId, go, onShowHistory, overdueDays = 3 }) {
+export default function OverviewScreen({ engine, orgId, go, onShowHistory, overdueDays = 3, scanReturns = true }) {
   const sync = useSyncExternalStore(engine.subscribe, engine.getState)
   const [units, setUnits] = useState(null)
   const [vehicles, setVehicles] = useState([])
   const [recent, setRecent] = useState([])
   const [pending, setPending] = useState([])
   const [attention, setAttention] = useState(0)
+  const [sessions, setSessions] = useState([])
 
   useEffect(() => {
     let alive = true
@@ -21,13 +22,15 @@ export default function OverviewScreen({ engine, orgId, go, onShowHistory, overd
       engine.cachedHistory(orgId),
       engine.pendingEvents(orgId, 'move'),
       engine.listAttention(orgId),
-    ]).then(([u, v, h, p, a]) => {
+      engine.listSessions(orgId),
+    ]).then(([u, v, h, p, a, ss]) => {
       if (!alive) return
       setUnits(u)
       setVehicles(v)
       setRecent(h.slice(0, 8))
       setPending(p)
       setAttention(a.length)
+      setSessions(ss)
     })
     // Fresh activity from the server when online (the cache above is the offline fallback).
     supabase.rpc('activity_feed', { p_org: orgId, p_limit: 8 }).then(({ data, error }) => {
@@ -74,13 +77,22 @@ export default function OverviewScreen({ engine, orgId, go, onShowHistory, overd
       .sort((a, b) => b.list.length - a.list.length)
   }, [units, vehicles])
 
-  // Out longer than the company's limit (Settings → Company).
+  // Returns scanned: out longer than the company's limit (Settings → Company).
+  // Returns not scanned: loaded before the last finished stocktake and not
+  // scanned in it (it would be back in stock otherwise) — "not seen".
+  const lastCount = sessions.find(x => x.status === 'closed')
   const overdue = useMemo(() => {
+    if (!scanReturns) {
+      if (!lastCount) return []
+      return (units ?? [])
+        .filter(u => u.status === 'out' && u.out_since && u.out_since < lastCount.created_at)
+        .sort((a, b) => a.out_since.localeCompare(b.out_since))
+    }
     const limit = Date.now() - overdueDays * 86400_000
     return (units ?? [])
       .filter(u => u.status === 'out' && u.out_since && Date.parse(u.out_since) < limit)
       .sort((a, b) => a.out_since.localeCompare(b.out_since))
-  }, [units, overdueDays])
+  }, [units, overdueDays, scanReturns, lastCount])
   const overdueIds = new Set(overdue.map(u => u.id))
   const damaged = (units ?? []).filter(u => u.condition === 'damaged' && u.status !== 'retired')
   const vName = id => vehicles.find(v => v.id === id)?.name
@@ -163,10 +175,14 @@ export default function OverviewScreen({ engine, orgId, go, onShowHistory, overd
           flush
           title={
             <span className="row" style={{ gap: 8 }}>
-              <Icon name="clock" /> Overdue ({overdue.length})
+              <Icon name="clock" /> {scanReturns ? 'Overdue' : 'Not seen in the last stocktake'} ({overdue.length})
             </span>
           }
-          description={`Out for more than ${overdueDays} day${overdueDays === 1 ? '' : 's'} — chase these up`}
+          description={
+            scanReturns
+              ? `Out for more than ${overdueDays} day${overdueDays === 1 ? '' : 's'} — chase these up`
+              : `Loaded before “${lastCount?.name}” and not scanned in it — still at a job, or lost`
+          }
         >
           <ul className="list" data-testid="overdue">
             {overdue.slice(0, 20).map(u => (
@@ -180,7 +196,7 @@ export default function OverviewScreen({ engine, orgId, go, onShowHistory, overd
                   </span>
                 </div>
                 <div className="li-end">
-                  <Badge tone="error">out {timeAgo(u.out_since).replace(' ago', '')}</Badge>
+                  <Badge tone="error">{scanReturns ? 'out' : 'loaded'} {timeAgo(u.out_since).replace(' ago', '')}</Badge>
                 </div>
               </li>
             ))}
@@ -216,8 +232,12 @@ export default function OverviewScreen({ engine, orgId, go, onShowHistory, overd
       <div className="overview-grid">
         <Section
           flush
-          title="Out right now"
-          description="Grouped by the reference used when checking out"
+          title={scanReturns ? 'Out right now' : 'Last loaded'}
+          description={
+            scanReturns
+              ? 'Grouped by the reference used when checking out'
+              : 'Loaded and not scanned in a stocktake since (returns aren’t scanned)'
+          }
         >
           {outGroups.length === 0 ? (
             <EmptyState icon="check" title="Everything is in">

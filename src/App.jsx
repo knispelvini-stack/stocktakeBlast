@@ -242,9 +242,9 @@ export default function App() {
 
   return (
     <Shell engine={engine} orgName={current?.name} active={active} go={go} signOut={signOut} who={who}>
-      {active === 'overview' && <OverviewScreen engine={engine} orgId={orgId} go={go} onShowHistory={showHistory} overdueDays={current?.overdue_days ?? 3} />}
-      {active === 'move' && <MoveScreen engine={engine} orgId={orgId} settings={settings} />}
-      {active === 'count' && <CountScreen engine={engine} orgId={orgId} settings={settings} />}
+      {active === 'overview' && <OverviewScreen engine={engine} orgId={orgId} go={go} onShowHistory={showHistory} overdueDays={current?.overdue_days ?? 3} scanReturns={current?.scan_returns ?? true} />}
+      {active === 'move' && <MoveScreen engine={engine} orgId={orgId} settings={settings} scanReturns={current?.scan_returns ?? true} />}
+      {active === 'count' && <CountScreen engine={engine} orgId={orgId} settings={settings} scanReturns={current?.scan_returns ?? true} />}
       {active === 'activity' && (
         <HistoryScreen engine={engine} orgId={orgId} settings={settings} initialCode={historyCode} />
       )}
@@ -258,6 +258,7 @@ export default function App() {
           orgId={orgId}
           orgName={current?.name ?? ''}
           overdueDays={current?.overdue_days ?? 3}
+          scanReturns={current?.scan_returns ?? true}
           onRenamed={loadOrgs}
           who={who}
           signOut={signOut}

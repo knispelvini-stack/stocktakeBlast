@@ -112,6 +112,21 @@ laminated tape (prints Code 128/QR from its own software — use **Codes (CSV)**
 a thermal-transfer printer with polyester labels and a resin ribbon, or a print shop (send them the
 CSV). Avoid direct-thermal labels for anything that sits in the sun — they fade.
 
+## Companies that don't scan returns
+
+Settings → Company → untick **“We scan items when they come back”** when items are scanned only when
+loading a van and in the (weekly) stocktake:
+
+- Loading an item that is still *out* counts as a new load (it came back unscanned). The same van
+  within 3 hours is treated as a double scan. The van panel shows **today's** loads.
+- The **stocktake is the return**: it expects in-stock *and* out items. Not scanned → **Missing** (was
+  in the warehouse) or **Not back** (where/when it was last loaded, and how many stocktakes have
+  missed it — 2+ usually means lost). Finishing with *update stock* puts every scanned item back in
+  stock, marks missing ones lost and leaves *not back* ones out, so they show again next week.
+- Overview: **Last loaded** instead of *Out right now*, and **Not seen in the last stocktake** instead of
+  *Overdue*.
+- Check IN still works for anyone who wants to use it.
+
 ## How the scanner works
 
 A scanner in HID mode types the code very fast and presses Enter. `src/lib/scanDetector.js`
