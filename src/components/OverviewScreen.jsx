@@ -5,7 +5,7 @@ import { PageHeader, Section, Stat, EmptyState, Badge, timeAgo } from './ui/ui.j
 
 // Everything here comes from the device's local cache, so the overview also
 // works offline. Numbers refresh whenever the sync engine changes data.
-export default function OverviewScreen({ engine, orgId, go, onShowHistory }) {
+export default function OverviewScreen({ engine, orgId, go, onShowHistory, overdueDays = 3 }) {
   const sync = useSyncExternalStore(engine.subscribe, engine.getState)
   const [units, setUnits] = useState(null)
   const [vehicles, setVehicles] = useState([])
@@ -41,11 +41,13 @@ export default function OverviewScreen({ engine, orgId, go, onShowHistory }) {
   }, [engine, orgId, sync.version, sync.lastSyncAt])
 
   const stats = useMemo(() => {
-    const s = { total: 0, in_stock: 0, out: 0, lost: 0 }
+    const s = { total: 0, in_stock: 0, out: 0, lost: 0, damaged: 0, available: 0 }
     for (const u of units ?? []) {
       if (u.status === 'retired') continue
       s.total++
       s[u.status] = (s[u.status] ?? 0) + 1
+      if (u.condition === 'damaged') s.damaged++
+      else if (u.status === 'in_stock') s.available++
     }
     return s
   }, [units])
@@ -71,6 +73,17 @@ export default function OverviewScreen({ engine, orgId, go, onShowHistory }) {
       }))
       .sort((a, b) => b.list.length - a.list.length)
   }, [units, vehicles])
+
+  // Out longer than the company's limit (Settings → Company).
+  const overdue = useMemo(() => {
+    const limit = Date.now() - overdueDays * 86400_000
+    return (units ?? [])
+      .filter(u => u.status === 'out' && u.out_since && Date.parse(u.out_since) < limit)
+      .sort((a, b) => a.out_since.localeCompare(b.out_since))
+  }, [units, overdueDays])
+  const overdueIds = new Set(overdue.map(u => u.id))
+  const damaged = (units ?? []).filter(u => u.condition === 'damaged' && u.status !== 'retired')
+  const vName = id => vehicles.find(v => v.id === id)?.name
 
   const today = new Date().toLocaleDateString([], { weekday: 'long', day: 'numeric', month: 'long' })
 
@@ -134,10 +147,71 @@ export default function OverviewScreen({ engine, orgId, go, onShowHistory }) {
 
       <div className="stats">
         <Stat icon="box" label="Total units" value={stats.total} hint="excluding retired" />
-        <Stat icon="check" label="In stock" value={stats.in_stock} hint={`${pct(stats.in_stock)}% available`} tone="ok" />
+        <Stat
+          icon="check"
+          label="Available"
+          value={stats.available}
+          hint={stats.damaged ? `${stats.in_stock} in stock · ${stats.damaged} damaged` : `${pct(stats.available)}% of units`}
+          tone="ok"
+        />
         <Stat icon="truck" label="Out" value={stats.out} hint={`${outGroups.length} location${outGroups.length === 1 ? '' : 's'}`} tone={stats.out ? 'warn' : ''} />
-        <Stat icon="alert" label="Lost" value={stats.lost} hint="missing in a stocktake" tone={stats.lost ? 'error' : ''} />
+        <Stat icon="alert" label="Lost" value={stats.lost} hint="not returned or not found" tone={stats.lost ? 'error' : ''} />
       </div>
+
+      {overdue.length > 0 && (
+        <Section
+          flush
+          title={
+            <span className="row" style={{ gap: 8 }}>
+              <Icon name="clock" /> Overdue ({overdue.length})
+            </span>
+          }
+          description={`Out for more than ${overdueDays} day${overdueDays === 1 ? '' : 's'} — chase these up`}
+        >
+          <ul className="list" data-testid="overdue">
+            {overdue.slice(0, 20).map(u => (
+              <li key={u.id} className="clickable" onClick={() => onShowHistory(u.code)}>
+                <div className="li-main">
+                  <span className="li-title mono">{u.code}</span>
+                  <span className="li-sub">
+                    {u.product}
+                    {u.vehicle_id && vName(u.vehicle_id) ? ` · ${vName(u.vehicle_id)}` : ''}
+                    {u.last_ref ? ` · ${u.last_ref}` : ''}
+                  </span>
+                </div>
+                <div className="li-end">
+                  <Badge tone="error">out {timeAgo(u.out_since).replace(' ago', '')}</Badge>
+                </div>
+              </li>
+            ))}
+            {overdue.length > 20 && <li className="muted small">+{overdue.length - 20} more</li>}
+          </ul>
+        </Section>
+      )}
+
+      {damaged.length > 0 && (
+        <Section
+          flush
+          title={`Damaged (${damaged.length})`}
+          description="Not available until marked repaired (Inventory → product → Manage)"
+        >
+          <ul className="list" data-testid="damaged-list">
+            {damaged.slice(0, 10).map(u => (
+              <li key={u.id} className="clickable" onClick={() => onShowHistory(u.code)}>
+                <div className="li-main">
+                  <span className="li-title mono">{u.code}</span>
+                  <span className="li-sub">
+                    {u.product}
+                    {u.condition_note ? ` · ${u.condition_note}` : ''}
+                  </span>
+                </div>
+                <div className="li-end">{u.status === 'out' ? <Badge tone="warn">out</Badge> : null}</div>
+              </li>
+            ))}
+            {damaged.length > 10 && <li className="muted small">+{damaged.length - 10} more</li>}
+          </ul>
+        </Section>
+      )}
 
       <div className="overview-grid">
         <Section
@@ -169,7 +243,12 @@ export default function OverviewScreen({ engine, orgId, go, onShowHistory }) {
                 </div>
                 <div className="codes ref-units">
                   {g.list.slice(0, 12).map(u => (
-                    <code key={u.id} title={u.product} className="clickable" onClick={() => onShowHistory(u.code)}>
+                    <code
+                      key={u.id}
+                      title={overdueIds.has(u.id) ? `${u.product} — overdue` : u.product}
+                      className={`clickable${overdueIds.has(u.id) ? ' overdue' : ''}`}
+                      onClick={() => onShowHistory(u.code)}
+                    >
                       {u.code}
                     </code>
                   ))}

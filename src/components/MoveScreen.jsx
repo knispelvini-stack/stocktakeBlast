@@ -4,6 +4,7 @@ import { beep } from '../lib/beep.js'
 import { ScanInput, ScanFlash, ScanFeed, makeEntry } from './ScanParts.jsx'
 import Icon from './ui/Icon.jsx'
 import { PageHeader, Section, Stat, EmptyState, Modal, useUI } from './ui/ui.jsx'
+import { DamageModal, useUnitActions } from './UnitActions.jsx'
 
 const STATUS_LABEL = { in_stock: 'in stock', out: 'out', lost: 'lost', retired: 'retired' }
 
@@ -11,6 +12,9 @@ function entryFor(r, direction, vehicle) {
   const verb = direction === 'out' ? (vehicle ? `On ${vehicle.name}` : 'Checked out') : 'Checked in'
   switch (r.result) {
     case 'ok':
+      if (r.condition === 'damaged')
+        // Allowed (maybe it's going for repair), but nobody should load it by accident.
+        return makeEntry('warn', r.code, `${verb}: ${r.product}`, `marked DAMAGED: ${r.condition_note || 'no note'}`)
       return makeEntry('ok', r.code, `${verb}: ${r.product}`, r.previous === 'lost' ? '(was marked lost — found!)' : '')
     case 'already':
       return makeEntry('warn', r.code, `Already ${STATUS_LABEL[r.status]}`, r.product)
@@ -27,6 +31,8 @@ export default function MoveScreen({ engine, orgId, settings }) {
   const sync = useSyncExternalStore(engine.subscribe, engine.getState)
   const ui = useUI()
   const [moving, setMoving] = useState(null) // entry whose van is being changed
+  const [damaging, setDamaging] = useState(null) // entry being reported damaged
+  const unitActions = useUnitActions({ engine, orgId })
   const [direction, setDirection] = useState('out')
   const [reference, setReference] = useState('')
   const [feed, setFeed] = useState([])
@@ -99,7 +105,7 @@ export default function MoveScreen({ engine, orgId, settings }) {
     // Only a move that changed something can be undone.
     if (r.result === 'ok') entry.move = { client_id: r.client_id, code: r.code, direction: dir, prev: r.prev, reference: ref, vehicleId: vehId }
     push(entry)
-    setCounts(c => (entry.kind === 'ok' ? { ...c, ok: c.ok + 1 } : { ...c, problems: c.problems + 1 }))
+    setCounts(c => (r.result === 'ok' ? { ...c, ok: c.ok + 1 } : { ...c, problems: c.problems + 1 }))
     return r
   }
 
@@ -135,9 +141,30 @@ export default function MoveScreen({ engine, orgId, settings }) {
     await record(entry.code, 'out', entry.move.reference, newVehicleId || null)
   }
 
+  async function reportDamage(entry, note) {
+    const unit = units.find(u => u.code === entry.code)
+    if (!unit) return ui.toast('This unit isn’t on this device yet — report it from Inventory.', 'error')
+    if (await unitActions.setCondition(unit, 'damaged', note)) {
+      setDamaging(null)
+      setFeed(f => f.map(e => (e.id === entry.id ? { ...e, damaged: true, kind: 'warn', detail: `reported damaged: ${note}` } : e)))
+    }
+  }
+
   const feedActions = e =>
     e.move && !e.undone ? (
       <>
+        {!e.damaged && (
+          <button
+            className="ghost small-btn"
+            data-testid="report-damage"
+            onClick={ev => {
+              ev.currentTarget.blur()
+              setDamaging(e)
+            }}
+          >
+            Damaged
+          </button>
+        )}
         {e.move.direction === 'out' && vehicles.some(v => v.active) && (
           <button
             className="ghost small-btn"
@@ -162,7 +189,7 @@ export default function MoveScreen({ engine, orgId, settings }) {
       </>
     ) : null
 
-  useScanner(handleScan, settings)
+  useScanner(handleScan, { ...settings, enabled: !damaging && !moving })
 
   // Suggest references already in use (e.g. "Van 2") — works offline.
   const [refs, setRefs] = useState([])
@@ -253,6 +280,9 @@ export default function MoveScreen({ engine, orgId, settings }) {
         </Section>
         </div>
       </div>
+      {damaging && (
+        <DamageModal code={damaging.code} onClose={() => setDamaging(null)} onSave={note => reportDamage(damaging, note)} />
+      )}
       {moving && (
         <Modal
           title={`Move ${moving.code} to…`}

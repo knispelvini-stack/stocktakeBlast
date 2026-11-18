@@ -242,13 +242,13 @@ export default function App() {
 
   return (
     <Shell engine={engine} orgName={current?.name} active={active} go={go} signOut={signOut} who={who}>
-      {active === 'overview' && <OverviewScreen engine={engine} orgId={orgId} go={go} onShowHistory={showHistory} />}
+      {active === 'overview' && <OverviewScreen engine={engine} orgId={orgId} go={go} onShowHistory={showHistory} overdueDays={current?.overdue_days ?? 3} />}
       {active === 'move' && <MoveScreen engine={engine} orgId={orgId} settings={settings} />}
       {active === 'count' && <CountScreen engine={engine} orgId={orgId} settings={settings} />}
       {active === 'activity' && (
         <HistoryScreen engine={engine} orgId={orgId} settings={settings} initialCode={historyCode} />
       )}
-      {active === 'inventory' && <ProductsScreen engine={engine} orgId={orgId} onShowHistory={showHistory} />}
+      {active === 'inventory' && <ProductsScreen engine={engine} orgId={orgId} onShowHistory={showHistory} settings={settings} isOwner={isOwner} />}
       {active === 'settings' && (
         <SettingsScreen
           engine={engine}
@@ -257,6 +257,7 @@ export default function App() {
           isOwner={isOwner}
           orgId={orgId}
           orgName={current?.name ?? ''}
+          overdueDays={current?.overdue_days ?? 3}
           onRenamed={loadOrgs}
           who={who}
           signOut={signOut}

@@ -169,7 +169,8 @@ function CountSession({ engine, orgId, session, settings, onBack }) {
     } catch (e) {
       return push(makeEntry('error', code, 'NOT SAVED', e.message))
     }
-    const base = { clientId: r.client_id }
+    // ok / unknown scans can be removed again (wrong shelf, stray barcode)
+    const base = { clientId: r.client_id, removable: ['ok', 'unknown'].includes(r.result) }
     if (r.result === 'ok') {
       if (r.unit_status === 'in_stock') push({ ...makeEntry('ok', r.code, r.product), ...base })
       else push({ ...makeEntry('warn', r.code, `Found: ${r.product}`, `system says "${r.unit_status}"`), ...base })
@@ -183,6 +184,32 @@ function CountSession({ engine, orgId, session, settings, onBack }) {
   }
 
   useScanner(handleScan, { ...settings, enabled: !closed && !closing })
+
+  async function remove(entry) {
+    const r = await engine.unscan({ orgId, sessionId: session.id, scanId: entry.clientId })
+    if (r.result === 'blocked') return ui.toast('This scan can’t be removed (already removed, or the stocktake is closed).', 'error')
+    setFeed(f =>
+      f.map(e =>
+        e.id === entry.id
+          ? { ...e, kind: 'warn', undone: true, removable: false, title: `Removed: ${e.title}`, detail: 'not counted — scan it again to count it' }
+          : e,
+      ),
+    )
+  }
+
+  const feedActions = e =>
+    e.removable && !e.undone && !closed ? (
+      <button
+        className="ghost small-btn"
+        data-testid="remove-scan"
+        onClick={ev => {
+          ev.currentTarget.blur()
+          remove(e)
+        }}
+      >
+        Remove
+      </button>
+    ) : null
 
   async function close() {
     const { data, error } = await supabase.rpc('close_count', { p_session: session.id, p_apply: apply })
@@ -263,7 +290,7 @@ function CountSession({ engine, orgId, session, settings, onBack }) {
           <Section flush title="Scans on this device">
             <div className="feed-panel">
               {feed.length ? (
-                <ScanFeed entries={feed} />
+                <ScanFeed entries={feed} actions={feedActions} />
               ) : (
                 <EmptyState icon="scan" title="Start scanning">
                   Every label you scan is counted once, even if several devices scan it.

@@ -54,7 +54,8 @@ const codesOf = async name =>
   assert.deepEqual((await codesOf('Paw Patrol banner 4x5')).map(r => r.code), ['BAN-PAW45-01', 'BAN-PAW45-02', 'BAN-PAW45-03'])
   step('generate 3 → BAN-PAW45-01, -02, -03 (preview matched what the server created)')
 
-  await page.click('tr:has-text("BAN-PAW45-02") button:has-text("Retire")')
+  await page.click('[data-testid="manage-BAN-PAW45-02"]')
+  await page.click('[data-testid="unit-modal"] button:has-text("Retire")')
   await dialog.locator('button:has-text("Retire unit")').click()
   await toast('BAN-PAW45-02 retired')
   assert.equal((await codesOf('Paw Patrol banner 4x5')).find(r => r.code === 'BAN-PAW45-02').status, 'retired')

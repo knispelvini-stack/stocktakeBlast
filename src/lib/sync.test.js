@@ -261,6 +261,40 @@ test('offline stocktake: session + scans, duplicate prediction, local summary', 
   assert.equal(await engine.pendingForSession(sid), 0)
 })
 
+test('stocktake: remove a wrong scan (unsynced → dropped; synced → voided, scan again counts)', async () => {
+  const { engine, server } = await setup([
+    { id: 'u1', code: 'AAAA1111', status: 'in_stock', product: 'Castle' },
+    { id: 'u2', code: 'BBBB2222', status: 'in_stock', product: 'Castle' },
+  ])
+  server.online = false
+  const sid = await engine.createSession({ orgId: ORG, name: 'Nov' })
+  const a = await engine.recordScan({ orgId: ORG, sessionId: sid, code: 'AAAA1111' })
+  assert.equal((await engine.unscan({ orgId: ORG, sessionId: sid, scanId: a.client_id })).result, 'removed')
+  assert.equal((await engine.sessionSummary(ORG, sid)).matched, 0)
+  assert.equal(await engine.pendingForSession(sid), 1, 'only the session itself is queued')
+
+  server.online = true
+  const b = await engine.recordScan({ orgId: ORG, sessionId: sid, code: 'BBBB2222' })
+  await engine.flush()
+  const u = await engine.unscan({ orgId: ORG, sessionId: sid, scanId: b.client_id })
+  assert.equal(u.result, 'queued')
+  assert.equal((await engine.sessionSummary(ORG, sid)).matched, 0, 'not counted any more')
+  assert.equal((await engine.unscan({ orgId: ORG, sessionId: sid, scanId: b.client_id })).result, 'blocked', 'only once')
+  await engine.flush()
+  const sent = server.calls.filter(c => c.name === 'sync_events').at(-1).args.p_events[0]
+  assert.deepEqual([sent.kind, sent.scan_id, sent.session_id], ['unscan', b.client_id, sid])
+  const again = await engine.recordScan({ orgId: ORG, sessionId: sid, code: 'BBBB2222' })
+  assert.equal(again.result, 'ok', 'scanning it again is not a duplicate')
+  assert.equal((await engine.sessionSummary(ORG, sid)).matched, 1)
+})
+
+test('damaged condition travels with the local unit', async () => {
+  const { engine } = await setup([{ id: 'u1', code: 'AAAA1111', status: 'in_stock', product: 'Castle', condition: 'damaged', condition_note: 'torn' }])
+  const r = await engine.recordMove({ orgId: ORG, code: 'AAAA1111', direction: 'out' })
+  assert.equal(r.condition, 'damaged')
+  assert.equal(r.condition_note, 'torn')
+})
+
 test('scan into a closed session is refused locally', async () => {
   const { engine } = await setup()
   const sid = await engine.createSession({ orgId: ORG, name: 'x' })
@@ -357,7 +391,7 @@ test('undo while the original is being sent waits for the answer', async () => {
     return orig(n, a)
   }
   const flushing = engine.flush()
-  await new Promise(res => setTimeout(res, 0))
+  while (!release) await new Promise(res => setTimeout(res, 1)) // until the batch is on the wire
   const undo = engine.undoMove({ orgId: ORG, move: { client_id: r.client_id, code: r.code, direction: 'out', prev: r.prev } })
   release()
   await flushing

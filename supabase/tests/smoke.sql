@@ -333,6 +333,70 @@ select pg_temp.check(jsonb_array_length(activity_feed(:'org_a', p_reference => '
 select pg_temp.check(jsonb_array_length(activity_feed(:'org_a', p_reference => 'van 2')) >= 3, 'search by vehicle name');
 select pg_temp.check(jsonb_array_length(activity_feed(:'org_a', p_reference => '%')) = 0, 'search treats % literally');
 
+-- ═══════════ operations: condition, lost, overdue, import, stocktake void ═══════════
+select pg_temp.as_user('eeeeeeee-0000-0000-0000-000000000005') \gset
+select id as d_id, code as d_code from generate_units(:'prod_a', 1) \gset
+select pg_temp.check(pg_temp.fails(format('select set_unit_condition(%L, %L)', :'d_id', 'damaged')), 'damage needs a note');
+select pg_temp.check(set_unit_condition(:'d_id', 'damaged', 'torn seam')->>'result' = 'ok', 'staff marks a unit damaged');
+select pg_temp.check((select e->>'condition' = 'damaged' and e->>'condition_note' = 'torn seam'
+                      from jsonb_array_elements(pull_units(:'org_a')) e where e->>'code' = :'d_code'), 'pull_units: condition + note');
+select pg_temp.check((select damaged = 1 and available = in_stock - 1 from product_stock where product_id = :'prod_a'), 'product_stock: damaged / available');
+select pg_temp.check(pg_temp.fails(format('update units set condition = %L where id = %L', 'ok', :'d_id')), 'condition not writable directly');
+select pg_temp.check(set_unit_condition(:'d_id', 'ok')->>'result' = 'ok', 'repaired');
+select pg_temp.check((select count(*) from unit_status_log where unit_id = :'d_id' and field = 'condition') = 2, 'condition changes logged');
+select pg_temp.check(set_unit_status(:'d_id', 'lost')->>'result' = 'ok', 'mark lost outside a stocktake');
+select pg_temp.check((select status from units where id = :'d_id') = 'lost', 'unit is lost');
+select pg_temp.check(pg_temp.fails(format('select set_unit_status(%L, %L)', :'d_id', 'lost')), 'lost → lost refused');
+select pg_temp.check(my_orgs()->0->>'overdue_days' = '3', 'overdue default 3 days');
+update orgs set overdue_days = 9 where id = :'org_a';
+select pg_temp.check(my_orgs()->0->>'overdue_days' = '3', 'staff cannot change overdue days');
+select pg_temp.check(pg_temp.fails(format('select import_products(%L, %L::jsonb)', :'org_a', '[{"name":"x"}]')), 'staff cannot import');
+select pg_temp.as_user('aaaaaaaa-0000-0000-0000-000000000001') \gset
+update orgs set overdue_days = 5 where id = :'org_a';
+select pg_temp.check(my_orgs()->0->>'overdue_days' = '5', 'owner sets overdue days');
+select import_products(:'org_a', '[
+  {"type":"BAN","theme":"Bluey","prefix":"blu","size":"3x4","quantity":"2"},
+  {"type":"ban","theme":"paw patrol","size":"6 x 8","quantity":1},
+  {"type":"CAS","name":"Castle Green","quantity":2},
+  {"type":"OTHER","name":"Table","stem":"tbl","quantity":1},
+  {"type":"BLO","name":"Blower big","sku":"BL-9"}]'::jsonb) as imp \gset
+select pg_temp.check(jsonb_array_length(:'imp'::jsonb) = 5, 'import 5 rows');
+select pg_temp.check((select count(*) from units where code in ('BAN-BLU34-01', 'BAN-BLU34-02', 'BAN-PAW68-01', 'TBL-01')) = 4, 'import: new theme, existing theme (by name), stems, labels');
+select pg_temp.check((select count(*) from units u join products p on p.id = u.product_id where p.name = 'Castle Green' and u.code like 'CAS-%') = 2, 'import: castles share the CAS sequence');
+select pg_temp.check((select name from products where code_stem = 'BAN-BLU34') = 'Bluey banner 3x4', 'import: banner name filled in');
+select pg_temp.check(pg_temp.fails(format('select import_products(%L, %L::jsonb)', :'org_a',
+  '[{"name":"Rollback me","quantity":1},{"type":"BAN","theme":"Paw Patrol","prefix":"PPP","size":"9x9"}]')), 'import: theme with another prefix refused');
+select pg_temp.check((select count(*) from products where name = 'Rollback me') = 0, 'import is all-or-nothing');
+select pg_temp.check(pg_temp.fails(format('select import_products(%L, %L::jsonb)', :'org_a', '[{"type":"BLO","name":"b","quantity":1}]')), 'import: blowers need codes by hand');
+-- stocktake: remove a wrong scan
+\set vs '44444444-4444-4444-4444-444444444441'
+\set sc1 '44444444-4444-4444-4444-444444444442'
+\set sc2 '44444444-4444-4444-4444-444444444443'
+\set sc3 '44444444-4444-4444-4444-444444444444'
+select code as vc from units where code = 'TBL-01' \gset
+select sync_events(jsonb_build_array(jsonb_build_object('kind','session','client_id',:'vs','org_id',:'org_a','name','Void test'))) as r \gset
+select sync_events(jsonb_build_array(jsonb_build_object('kind','scan','client_id',:'sc1','session_id',:'vs','code',:'vc'))) as r \gset
+select pg_temp.check((count_summary(:'vs')->>'scanned')::int = 1, 'scan counted');
+select sync_events(jsonb_build_array(jsonb_build_object('kind','unscan','client_id',gen_random_uuid(),'session_id',:'vs','scan_id',:'sc1'))) as r \gset
+select pg_temp.check((:'r'::jsonb)->0->>'result' = 'ok', 'unscan ok');
+select pg_temp.check((count_summary(:'vs')->>'scanned')::int = 0, 'wrong scan removed from the count');
+select pg_temp.check((select (e->>'voided')::boolean from jsonb_array_elements(pull_scans(:'vs')) e where e->>'id' = :'sc1'), 'pull_scans: voided');
+select pg_temp.check((select count(*) from count_scans where id = :'sc1') = 1, 'scan row kept');
+select sync_events(jsonb_build_array(jsonb_build_object('kind','unscan','client_id',gen_random_uuid(),'session_id',:'vs','scan_id',:'sc1'))) as r \gset
+select pg_temp.check((:'r'::jsonb)->0->>'result' = 'already', 'cannot void twice');
+select sync_events(jsonb_build_array(jsonb_build_object('kind','scan','client_id',:'sc2','session_id',:'vs','code',:'vc'))) as r \gset
+select pg_temp.check((:'r'::jsonb)->0->>'result' = 'ok', 'rescan answers ok');
+select pg_temp.check((count_summary(:'vs')->>'scanned')::int = 1, 'scanning it again counts it again');
+select sync_events(jsonb_build_array(jsonb_build_object('kind','scan','client_id',:'sc3','session_id',:'vs','code','NOPE-1'))) as r \gset
+select sync_events(jsonb_build_array(jsonb_build_object('kind','unscan','client_id',gen_random_uuid(),'session_id',:'vs','scan_id',:'sc3'))) as r \gset
+select pg_temp.check(jsonb_array_length(count_summary(:'vs')->'unknown') = 0, 'unknown code removed');
+select sync_events(jsonb_build_array(jsonb_build_object('kind','unscan','client_id',gen_random_uuid(),'session_id',:'vs','scan_id',:'sc2'))) as r \gset
+select pg_temp.check((:'r'::jsonb)->0->>'result' = 'already', 'a duplicate row has nothing to remove');
+select pg_temp.check((close_count(:'vs', false)->>'applied')::boolean = false, 'close');
+select sync_events(jsonb_build_array(jsonb_build_object('kind','unscan','client_id',gen_random_uuid(),'session_id',:'vs','scan_id',:'sc1'))) as r \gset
+select pg_temp.check((:'r'::jsonb)->0->>'result' = 'session_closed', 'no voids after closing');
+select pg_temp.check(pg_temp.fails(format('select _sync_unscan(%L::jsonb)', '{}')), 'internal _sync_unscan not callable');
+
 -- ═══════════ user B attacks org A ═══════════
 select pg_temp.as_user('bbbbbbbb-0000-0000-0000-000000000002') \gset
 select pg_temp.check((select count(*) from orgs) = 0, 'B sees no orgs');
@@ -373,6 +437,12 @@ select code as b_unit from generate_units(:'b_prod', 1) \gset
 select sync_events(jsonb_build_array(jsonb_build_object(
   'kind','move','client_id',gen_random_uuid(),'org_id',:'org_b','code',:'b_unit','direction','in','corrects',:'u2'))) as r \gset
 select pg_temp.check((:'r'::jsonb)->0->>'result' = 'error', 'B cannot undo an A movement');
+select pg_temp.check(pg_temp.fails(format('select set_unit_condition(%L, %L, %L)', :'d_id', 'damaged', 'x')), 'B cannot mark A units damaged');
+select pg_temp.check(pg_temp.fails(format('select import_products(%L, %L::jsonb)', :'org_a', '[{"name":"evil"}]')), 'B cannot import into A');
+select sync_events(jsonb_build_array(jsonb_build_object('kind','unscan','client_id',gen_random_uuid(),'session_id',:'vs','scan_id',:'sc2'))) as r \gset
+select pg_temp.check((:'r'::jsonb)->0->>'result' = 'error', 'B cannot void A scans');
+select pg_temp.check((select count(*) from count_scan_voids) = 0, 'B sees no A voids');
+select pg_temp.check((select count(*) from product_stock where org_id = :'org_a') = 0, 'B sees no A stock');
 select sync_events(jsonb_build_array(jsonb_build_object(
   'kind','move','client_id',gen_random_uuid(),'org_id',:'org_b','code',:'b_unit','direction','out','vehicle_id',:'van2'))) as r \gset
 select pg_temp.check((:'r'::jsonb)->0->>'result' = 'error', 'B cannot put its units on A vehicle');
@@ -383,7 +453,7 @@ select pg_temp.check(pg_temp.fails('select gen_unit_code()'), 'internal gen_unit
 -- ═══════════ A state untouched ═══════════
 select pg_temp.as_user('aaaaaaaa-0000-0000-0000-000000000001') \gset
 select pg_temp.check((select status from units where code = :'c2') = 'in_stock', 'A unit c2 untouched by B (back in stock after count)');
-select pg_temp.check((select count(*) from count_sessions) = 1, 'no evil session in A');
+select pg_temp.check((select count(*) from count_sessions where name = 'evil') = 0, 'no evil session in A');
 
 reset role;
 set role anon;

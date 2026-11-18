@@ -4,10 +4,16 @@ import Labels from './Labels.jsx'
 import LabelStudio from './LabelStudio.jsx'
 import NewProductModal from './NewProductModal.jsx'
 import Icon from './ui/Icon.jsx'
-import { PageHeader, Section, EmptyState, Modal, StatusBadge, Stat, useUI, timeAgo } from './ui/ui.jsx'
+import { PageHeader, Section, EmptyState, Modal, StatusBadge, Stat, Badge, useUI, timeAgo } from './ui/ui.jsx'
+import { useScanner } from '../lib/useScanner.js'
+import { ConditionBadge, UnitModal } from './UnitActions.jsx'
+import ImportModal from './ImportModal.jsx'
 
-export default function ProductsScreen({ engine, orgId, onShowHistory }) {
+export default function ProductsScreen({ engine, orgId, onShowHistory, settings = {}, isOwner = false }) {
   const ui = useUI()
+  const [highlight, setHighlight] = useState(null) // unit code to point at in the product
+  const [importing, setImporting] = useState(false)
+  const [localUnits, setLocalUnits] = useState([])
   const [products, setProducts] = useState(null)
   const [offline, setOffline] = useState(false)
   const [selected, setSelected] = useState(null)
@@ -33,6 +39,21 @@ export default function ProductsScreen({ engine, orgId, onShowHistory }) {
     load()
   }, [load])
 
+  // Unit codes come from the device cache: search and scan work offline.
+  useEffect(() => {
+    engine.listUnits(orgId).then(setLocalUnits)
+  }, [engine, orgId, selected])
+
+  function openUnit(code) {
+    const u = localUnits.find(x => x.code === code)
+    if (!u) return ui.toast(`${code} is not in your inventory (or this device hasn’t synced it yet).`, 'error')
+    setQuery('')
+    setHighlight(u.code)
+    setSelected(u.product_id)
+  }
+  // Scanning a label on the product list opens that unit.
+  useScanner(openUnit, { ...settings, enabled: !selected && !studio && !creating && !importing })
+
   if (studio)
     return (
       <LabelStudio
@@ -54,10 +75,12 @@ export default function ProductsScreen({ engine, orgId, onShowHistory }) {
         engine={engine}
         orgId={orgId}
         product={product}
+        highlight={highlight}
         onChanged={load}
         onShowHistory={onShowHistory}
         onBack={() => {
           setSelected(null)
+          setHighlight(null)
           load()
         }}
       />
@@ -81,6 +104,8 @@ export default function ProductsScreen({ engine, orgId, onShowHistory }) {
   const shown = (products ?? []).filter(p =>
     `${p.name} ${p.sku ?? ''}`.toLowerCase().includes(query.trim().toLowerCase()),
   )
+  const q = query.trim().toUpperCase()
+  const unitHits = q.length >= 2 ? localUnits.filter(u => u.code.includes(q)).sort((a, b) => a.code.localeCompare(b.code)) : []
 
   return (
     <>
@@ -89,6 +114,11 @@ export default function ProductsScreen({ engine, orgId, onShowHistory }) {
         description="Your products and every labelled unit. Open a product to generate and print labels."
         actions={
           <>
+            {isOwner && (
+              <button className="ghost" onClick={() => setImporting(true)} disabled={offline} data-testid="open-import">
+                <Icon name="download" /> Import CSV
+              </button>
+            )}
             <button className="secondary" onClick={() => setStudio(true)} data-testid="open-labels">
               <Icon name="printer" /> Labels
             </button>
@@ -129,17 +159,39 @@ export default function ProductsScreen({ engine, orgId, onShowHistory }) {
             <Stat label="In stock" value={totals.in_stock} tone="ok" />
             <Stat label="Out / lost" value={`${totals.out} / ${totals.lost}`} tone={totals.lost ? 'error' : totals.out ? 'warn' : ''} />
           </div>
+          {unitHits.length > 0 && (
+            <Section flush title="Units" description="Codes matching your search — open one to manage it">
+              <ul className="list" data-testid="unit-hits">
+                {unitHits.slice(0, 20).map(u => (
+                  <li key={u.id} className="clickable" onClick={() => openUnit(u.code)}>
+                    <div className="li-main">
+                      <span className="li-title mono">{u.code}</span>
+                      <span className="li-sub">{u.product}</span>
+                    </div>
+                    <div className="li-end">
+                      <ConditionBadge unit={u} />
+                      <StatusBadge status={u.status} />
+                      <Icon name="chevronRight" size={16} />
+                    </div>
+                  </li>
+                ))}
+                {unitHits.length > 20 && <li className="muted small">+{unitHits.length - 20} more — type more of the code</li>}
+              </ul>
+            </Section>
+          )}
           <Section
             flush
             title="Products"
             actions={
               <div className="input-icon" style={{ width: 240, maxWidth: '100%' }}>
                 <Icon name="search" size={16} />
-                <input placeholder="Search name or SKU" value={query} onChange={e => setQuery(e.target.value)} aria-label="Search products" />
+                <input placeholder="Search name, SKU or code — or scan" value={query} onChange={e => setQuery(e.target.value)} aria-label="Search products" />
               </div>
             }
           >
-            {shown.length === 0 ? (
+            {shown.length === 0 && unitHits.length > 0 ? (
+              <p className="muted small" style={{ padding: '14px 20px' }}>No product names match — see the units above.</p>
+            ) : shown.length === 0 ? (
               <EmptyState icon="search" title="No matches">
                 Nothing matches “{query}”.
               </EmptyState>
@@ -164,6 +216,12 @@ export default function ProductsScreen({ engine, orgId, onShowHistory }) {
                         <tr key={p.id} className="clickable" onClick={() => setSelected(p.id)}>
                           <td className="primary-cell">
                             {p.name}
+                            {Number(p.stock.damaged) > 0 && (
+                              <>
+                                {' '}
+                                <Badge tone="error">{p.stock.damaged} damaged</Badge>
+                              </>
+                            )}
                             {(p.code_stem || p.sku) && (
                               <div className="muted small mono">
                                 {p.code_stem ? `${p.code_stem}-${'0'.repeat(p.code_digits - 1)}1` : p.category === 'BLO' ? 'codes by hand' : p.sku}
@@ -195,6 +253,17 @@ export default function ProductsScreen({ engine, orgId, onShowHistory }) {
         </>
       )}
 
+      {importing && (
+        <ImportModal
+          orgId={orgId}
+          onClose={() => setImporting(false)}
+          onImported={async () => {
+            setImporting(false)
+            await load()
+            engine.pullUnits(orgId).then(() => engine.listUnits(orgId)).then(setLocalUnits).catch(() => {})
+          }}
+        />
+      )}
       {creating && (
         <NewProductModal
           orgId={orgId}
@@ -210,7 +279,7 @@ export default function ProductsScreen({ engine, orgId, onShowHistory }) {
   )
 }
 
-function ProductDetail({ engine, orgId, product, onBack, onChanged, onShowHistory }) {
+function ProductDetail({ engine, orgId, product, highlight, onBack, onChanged, onShowHistory }) {
   const ui = useUI()
   const [units, setUnits] = useState(null)
   const [count, setCount] = useState(1)
@@ -221,6 +290,7 @@ function ProductDetail({ engine, orgId, product, onBack, onChanged, onShowHistor
   const [showRetired, setShowRetired] = useState(false)
   const [adding, setAdding] = useState(false)
   const [editing, setEditing] = useState(false)
+  const [managing, setManaging] = useState(null)
   const [manualCode, setManualCode] = useState('')
   const [nextCodes, setNextCodes] = useState([])
   const manual = product.category === 'BLO'
@@ -252,7 +322,7 @@ function ProductDetail({ engine, orgId, product, onBack, onChanged, onShowHistor
   const load = useCallback(async () => {
     const { data, error } = await supabase
       .from('units')
-      .select('id, code, status, last_moved_at, created_at')
+      .select('id, code, status, last_moved_at, created_at, condition, condition_note')
       .eq('product_id', product.id)
       .order('created_at')
       .order('code')
@@ -278,23 +348,6 @@ function ProductDetail({ engine, orgId, product, onBack, onChanged, onShowHistor
     engine.pullUnits(orgId).catch(() => {}) // make the new codes scannable offline
   }
 
-  async function setStatus(unit, status) {
-    if (status === 'retired') {
-      const ok = await ui.confirm({
-        title: `Retire ${unit.code}?`,
-        body: 'Use this for a unit that was sold, scrapped or written off. It will no longer be expected in stocktakes. You can restore it later.',
-        confirmLabel: 'Retire unit',
-        danger: true,
-      })
-      if (!ok) return
-    }
-    const { error } = await supabase.rpc('set_unit_status', { p_unit: unit.id, p_status: status })
-    if (error) return ui.toast(error.message, 'error')
-    ui.toast(status === 'retired' ? `${unit.code} retired.` : `${unit.code} restored to stock.`, 'ok')
-    load()
-    engine.pullUnits(orgId).catch(() => {})
-  }
-
   function toggle(id) {
     setChecked(prev => {
       const next = new Set(prev)
@@ -303,7 +356,13 @@ function ProductDetail({ engine, orgId, product, onBack, onChanged, onShowHistor
     })
   }
 
-  const visible = (units ?? []).filter(u => showRetired || u.status !== 'retired')
+  const visible = (units ?? []).filter(u => showRetired || u.status !== 'retired' || u.code === highlight)
+
+  // Opened by a scan / code search: point at that unit.
+  useEffect(() => {
+    if (!highlight || !units) return
+    document.querySelector(`[data-unit="${highlight}"]`)?.scrollIntoView({ block: 'center' })
+  }, [highlight, units])
   const toPrint = visible.filter(u => checked.has(u.id))
   const allChecked = visible.length > 0 && visible.every(u => checked.has(u.id))
 
@@ -399,7 +458,7 @@ function ProductDetail({ engine, orgId, product, onBack, onChanged, onShowHistor
               </thead>
               <tbody>
                 {visible.map(u => (
-                  <tr key={u.id}>
+                  <tr key={u.id} data-unit={u.code} className={u.code === highlight ? 'row-highlight' : ''}>
                     <td>
                       <input type="checkbox" aria-label={`Select ${u.code}`} checked={checked.has(u.id)} onChange={() => toggle(u.id)} />
                     </td>
@@ -409,19 +468,16 @@ function ProductDetail({ engine, orgId, product, onBack, onChanged, onShowHistor
                       </button>
                     </td>
                     <td>
-                      <StatusBadge status={u.status} />
+                      <span className="row" style={{ gap: 6, flexWrap: 'wrap' }}>
+                        <StatusBadge status={u.status} />
+                        <ConditionBadge unit={u} />
+                      </span>
                     </td>
                     <td className="muted small hide-sm">{u.last_moved_at ? timeAgo(u.last_moved_at) : 'Never'}</td>
                     <td className="num">
-                      {u.status === 'retired' ? (
-                        <button className="link" onClick={() => setStatus(u, 'in_stock')}>
-                          Restore
-                        </button>
-                      ) : (
-                        <button className="link danger-text" onClick={() => setStatus(u, 'retired')}>
-                          Retire
-                        </button>
-                      )}
+                      <button className="link" onClick={() => setManaging(u)} data-testid={`manage-${u.code}`}>
+                        Manage
+                      </button>
                     </td>
                   </tr>
                 ))}
@@ -492,6 +548,19 @@ function ProductDetail({ engine, orgId, product, onBack, onChanged, onShowHistor
             </label>
           </Modal>
         </form>
+      )}
+      {managing && (
+        <UnitModal
+          engine={engine}
+          orgId={orgId}
+          unit={managing}
+          onClose={() => setManaging(null)}
+          onChanged={async () => {
+            await load()
+            await onChanged()
+          }}
+          onShowHistory={onShowHistory}
+        />
       )}
       {editing && (
         <EditProductModal

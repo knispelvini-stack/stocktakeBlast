@@ -7,19 +7,21 @@ import Labels from './Labels.jsx'
 // Owner-only settings. Every action is re-checked on the server
 // (_require_owner); hiding these sections from staff is only convenience.
 
-export function CompanySettings({ orgId, orgName, onRenamed }) {
+export function CompanySettings({ orgId, orgName, overdueDays = 3, onRenamed }) {
   const ui = useUI()
   const [name, setName] = useState(orgName)
+  const [days, setDays] = useState(String(overdueDays))
   const [saving, setSaving] = useState(false)
-  const dirty = name.trim() && name.trim() !== orgName
+  const daysOk = /^\d+$/.test(days) && Number(days) >= 1 && Number(days) <= 60
+  const dirty = name.trim() && daysOk && (name.trim() !== orgName || Number(days) !== overdueDays)
 
   async function rename(e) {
     e.preventDefault()
     setSaving(true)
-    const { error } = await supabase.from('orgs').update({ name: name.trim() }).eq('id', orgId)
+    const { error } = await supabase.from('orgs').update({ name: name.trim(), overdue_days: Number(days) }).eq('id', orgId)
     setSaving(false)
     if (error) return ui.toast(error.message, 'error')
-    ui.toast('Company name saved.', 'ok')
+    ui.toast('Company settings saved.', 'ok')
     onRenamed()
   }
 
@@ -29,6 +31,19 @@ export function CompanySettings({ orgId, orgName, onRenamed }) {
         <label>
           Company name
           <input required maxLength={80} value={name} onChange={e => setName(e.target.value)} />
+        </label>
+        <label>
+          Overdue after (days)
+          <input
+            type="number"
+            min={1}
+            max={60}
+            value={days}
+            onChange={e => setDays(e.target.value)}
+            style={{ maxWidth: 120 }}
+            data-testid="overdue-days"
+          />
+          <span className="hint">Units out longer than this are listed as overdue on the Overview.</span>
         </label>
         <div className="row end">
           <button className="primary" disabled={!dirty || saving}>

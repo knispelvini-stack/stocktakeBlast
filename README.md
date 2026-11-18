@@ -13,6 +13,11 @@ driven by any USB/Bluetooth barcode scanner in keyboard (HID) mode — no driver
   person, van or job; filter by unit (scan a label), direction, vehicle and dates; CSV export; scans
   waiting to sync and sync conflicts are shown on top.
 - **Undo a scan / change van** — wrong item or wrong van: fix it from the scan list (see below).
+- **Damaged / lost** — report damage with a note (while unloading, or from Inventory); mark a piece
+  lost outside a stocktake. **Overdue** items (out longer than N days, set in Settings → Company)
+  are listed on the Overview.
+- **Import CSV** (owner) — create many products and their labels at once; **Codes (CSV)** export
+  for a label printer's own software or a print shop.
 - **Scanner** — setup checklist, live test and speed measurement to tune detection.
 - **Works offline** — keep scanning with no connection; everything syncs when it's back.
 
@@ -84,8 +89,28 @@ The owner registers vehicles in **Settings → Vehicles** (name, optional plate)
 - **Change van**: undo + check out onto the van you pick, in one step.
 - **Edit product**: name and SKU only. Category, theme, size and code scheme are fixed once
   created — make a new product instead.
-- **Retire / restore** a unit: Inventory → product → Retire. Goes through `set_unit_status()` and is
-  logged in `unit_status_log`.
+- **Retire / restore / mark lost** a unit: Inventory → product → **Manage** (or scan the label on the
+  Inventory screen to jump to it). Goes through `set_unit_status()` and is logged in `unit_status_log`.
+- **Damaged → repaired**: `set_unit_condition()` (note required). Condition is separate from status:
+  a damaged piece can be out or in the warehouse. *Available* = in stock and not damaged. Checking
+  out a damaged piece is allowed but shows a warning.
+- **Stocktake, wrong scan**: **Remove** in the scan list. Unsynced → dropped; synced → voided on
+  the server (`count_scan_voids`, the scan row is kept). Scanning the unit again counts it again.
+
+## Import (CSV)
+
+Inventory → **Import CSV** (owner). Columns: `type,name,sku,theme,prefix,size,stem,digits,quantity`
+(download the template in the dialog). `type`: `BAN` (theme + size; prefix only for a new theme),
+`CAS`, `BLO` (quantity 0 — codes by hand), `OTHER` (optional stem, e.g. `TBL`). `quantity` labels are
+generated with the normal numbering. Everything is checked again in the database and imported
+**all or nothing**; an error names the row.
+
+## Printing durable labels
+
+Paper labels won't survive outdoor use (wet, rolled, dragged). Options: a label maker with
+laminated tape (prints Code 128/QR from its own software — use **Codes (CSV)** as the data source),
+a thermal-transfer printer with polyester labels and a resin ribbon, or a print shop (send them the
+CSV). Avoid direct-thermal labels for anything that sits in the sun — they fade.
 
 ## How the scanner works
 
@@ -143,7 +168,8 @@ Limits worth knowing:
 | `products` | product types (name, optional SKU, code scheme) | insert by members; update of **name and SKU only**; never deleted |
 | `units` | one row per physical item, `status`: in_stock / out / lost / retired | **none** — created via `generate_units()`, status via moves / `close_count()` / `set_unit_status()`; never deleted |
 | `movements` | audit trail of every check out/in (`scanned_at`, `applied`, `vehicle_id`, `corrects_id`) | **none** — only via `sync_events()` / `close_count()` |
-| `unit_status_log` | who retired / restored which unit | **none** — only via `set_unit_status()` |
+| `unit_status_log` | who retired / restored / lost / damaged / repaired which unit | **none** — only via `set_unit_status()` / `set_unit_condition()` |
+| `count_scan_voids` | stocktake scans removed as wrong (lifted when re-scanned) | **none** — only via `sync_events()` |
 | `count_sessions`, `count_scans` | stocktakes and each scan | via `sync_events()` (session insert also allowed) |
 
 Read RPCs used by the offline cache and History: `my_orgs`, `pull_units`, `pull_sessions`,
