@@ -25,4 +25,5 @@ sleep 1
 node e2e/offline.cjs "$OUT"
 node e2e/pin.cjs "$OUT"
 node e2e/labels.cjs "$OUT"
+node e2e/vehicles.cjs "$OUT"
 echo "screenshots: $OUT"

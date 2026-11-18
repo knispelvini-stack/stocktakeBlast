@@ -15,8 +15,9 @@ import { predictMove, predictScan, computeSummary, needsAttention, isRetryable, 
 // Where an out unit is (reference) and since when — shown on the Overview.
 // Cleared whenever the unit is no longer out.
 function withMove(unit, status, ev) {
-  if (status !== 'out') return { ...unit, status, last_ref: null, out_since: null }
-  if (ev && ev.direction === 'out') return { ...unit, status, last_ref: ev.reference ?? null, out_since: ev.scanned_at }
+  if (status !== 'out') return { ...unit, status, last_ref: null, out_since: null, vehicle_id: null }
+  if (ev && ev.direction === 'out')
+    return { ...unit, status, last_ref: ev.reference ?? null, out_since: ev.scanned_at, vehicle_id: ev.vehicle_id ?? null }
   return { ...unit, status }
 }
 
@@ -79,7 +80,7 @@ export function createSyncEngine({
   }
 
   // ───────── recording (works offline) ─────────
-  async function recordMove({ orgId, code: raw, direction, reference }) {
+  async function recordMove({ orgId, code: raw, direction, reference, vehicleId }) {
     const code = normalizeCode(raw)
     const tx = db.transaction(['units', 'outbox'], 'readwrite')
     const unit = await tx.objectStore('units').index('org_code').get([orgId, code])
@@ -92,6 +93,7 @@ export function createSyncEngine({
       code,
       direction,
       reference: reference?.trim() || null,
+      vehicle_id: vehicleId || null,
       scanned_at: now().toISOString(),
       seq: ++seq,
       predicted: pred.result,
@@ -175,8 +177,8 @@ export function createSyncEngine({
 
   // ───────── pushing ─────────
   function toWire(ev) {
-    const { client_id, kind, org_id, code, direction, reference, session_id, name, scanned_at } = ev
-    return { client_id, kind, org_id, code, direction, reference, session_id, name, scanned_at }
+    const { client_id, kind, org_id, code, direction, reference, vehicle_id, session_id, name, scanned_at } = ev
+    return { client_id, kind, org_id, code, direction, reference, vehicle_id, session_id, name, scanned_at }
   }
 
   async function flush() {
@@ -251,6 +253,7 @@ export function createSyncEngine({
             product: res.product ?? ev.product,
             direction: ev.direction,
             reference: ev.reference,
+            vehicle_id: ev.vehicle_id ?? null,
             applied: res.result === 'ok',
             scanned_at: ev.scanned_at,
             user_label: ctx.label,
@@ -340,6 +343,18 @@ export function createSyncEngine({
     return all.length
   }
 
+  // Vehicles are few: kept whole in the meta store (no DB schema bump needed).
+  async function pullVehicles(orgId) {
+    const rows = await call('pull_vehicles', { p_org: orgId })
+    await db.put('meta', rows, `vehicles:${orgId}`)
+    bump()
+    return rows
+  }
+
+  async function listVehicles(orgId) {
+    return (await db.get('meta', `vehicles:${orgId}`)) ?? []
+  }
+
   async function pullSessions(orgId) {
     const rows = await call('pull_sessions', { p_org: orgId })
     const tx = db.transaction('sessions', 'readwrite')
@@ -362,7 +377,7 @@ export function createSyncEngine({
   async function refreshOrg(orgId) {
     try {
       await flush()
-      await Promise.all([pullUnits(orgId), pullSessions(orgId)])
+      await Promise.all([pullUnits(orgId), pullSessions(orgId), pullVehicles(orgId)])
       return true
     } catch (e) {
       if (!e.retryable) set({ lastError: e.message })
@@ -446,6 +461,7 @@ export function createSyncEngine({
         r =>
           (!code || r.code === code) &&
           (!f.direction || r.direction === f.direction) &&
+          (!f.vehicle || r.vehicle_id === f.vehicle) &&
           (!ref || (r.reference || '').toLowerCase().includes(ref)) &&
           (!f.from || r.scanned_at >= f.from) &&
           (!f.to || r.scanned_at < f.to),
@@ -522,6 +538,8 @@ export function createSyncEngine({
     clearAll,
     // reads
     listUnits,
+    listVehicles,
+    pullVehicles,
     sessionSummary,
     listSessions,
     pendingEvents,

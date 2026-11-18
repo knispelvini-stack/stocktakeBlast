@@ -3,16 +3,17 @@ import { useScanner } from '../lib/useScanner.js'
 import { beep } from '../lib/beep.js'
 import Icon from './ui/Icon.jsx'
 import { PageHeader, Section, Badge } from './ui/ui.jsx'
-import { CompanySettings, AccessSettings } from './AdminScreen.jsx'
+import { CompanySettings, AccessSettings, VehicleSettings } from './AdminScreen.jsx'
 
 // Settings = everything that isn't daily work. Owner-only sections are hidden
 // from staff (and enforced on the server).
-export default function SettingsScreen({ settings, onChange, isOwner, orgId, orgName, onRenamed, who, signOut }) {
+export default function SettingsScreen({ engine, settings, onChange, isOwner, orgId, orgName, onRenamed, who, signOut }) {
   const sections = [
     ...(isOwner
       ? [
           { id: 'company', label: 'Company', icon: 'building' },
           { id: 'access', label: 'PIN & devices', icon: 'users' },
+          { id: 'vehicles', label: 'Vehicles', icon: 'truck' },
         ]
       : []),
     { id: 'scanner', label: 'Scanner', icon: 'barcode' },
@@ -43,6 +44,7 @@ export default function SettingsScreen({ settings, onChange, isOwner, orgId, org
         <div className="stack">
           {section === 'company' && <CompanySettings orgId={orgId} orgName={orgName} onRenamed={onRenamed} />}
           {section === 'access' && <AccessSettings orgId={orgId} />}
+          {section === 'vehicles' && <VehicleSettings engine={engine} orgId={orgId} />}
           {section === 'scanner' && <ScannerSettings settings={settings} onChange={onChange} />}
           {section === 'account' && <AccountSettings who={who} orgName={orgName} signOut={signOut} />}
         </div>

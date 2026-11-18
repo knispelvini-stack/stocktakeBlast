@@ -387,6 +387,10 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .att-list li { display: flex; justify-content: space-between; gap: 12px; padding: 12px 20px; border-top: 1px solid var(--border); flex-wrap: wrap; align-items: center; }
 .small-btn { min-height: 32px; padding: 4px 10px; font-size: 13px; }
 
+.where { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; }
+.where-vehicle { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; }
+.filters { grid-template-columns: 2fr 1fr 1fr 1.4fr 1fr 1fr; }
+
 /* sync status */
 .sync-badge { display: flex; align-items: center; border-radius: var(--radius-sm); }
 .sync-badge button { min-height: 32px; border: 0; box-shadow: none; }

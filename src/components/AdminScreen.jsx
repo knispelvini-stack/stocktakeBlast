@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase.js'
 import Icon from './ui/Icon.jsx'
 import { Section, Badge, useUI, timeAgo, formatDateTime } from './ui/ui.jsx'
+import Labels from './Labels.jsx'
 
 // Owner-only settings. Every action is re-checked on the server
 // (_require_owner); hiding these sections from staff is only convenience.
@@ -202,6 +203,159 @@ export function AccessSettings({ orgId }) {
                           Remove
                         </button>
                       )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Section>
+    </>
+  )
+}
+
+// Vehicles: owner adds them, prints each one's label (VEH-NN) and can
+// deactivate one. Never deleted, so history keeps the name.
+export function VehicleSettings({ engine, orgId }) {
+  const ui = useUI()
+  const [vehicles, setVehicles] = useState(null)
+  const [name, setName] = useState('')
+  const [plate, setPlate] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [printing, setPrinting] = useState(null)
+
+  const load = useCallback(async () => {
+    try {
+      setVehicles(await engine.pullVehicles(orgId))
+    } catch (e) {
+      setVehicles(await engine.listVehicles(orgId))
+      if (!e.retryable) ui.toast(e.message, 'error')
+    }
+  }, [engine, orgId, ui])
+
+  useEffect(() => {
+    load()
+  }, [load])
+
+  async function add(e) {
+    e.preventDefault()
+    setSaving(true)
+    const { data, error } = await supabase
+      .from('vehicles')
+      .insert({ org_id: orgId, name: name.trim(), plate: plate.trim() || null })
+      .select('id, code, name')
+      .single()
+    setSaving(false)
+    if (error) return ui.toast(error.code === '23505' ? 'A vehicle with that name already exists.' : error.message, 'error')
+    ui.toast(`${data.name} added as ${data.code}. Print its label and stick it inside the van.`, 'ok')
+    setName('')
+    setPlate('')
+    load()
+  }
+
+  async function setActive(v, active) {
+    if (!active) {
+      const ok = await ui.confirm({
+        title: `Deactivate ${v.name}?`,
+        body: 'It disappears from the check-out screen. Its history stays, and you can reactivate it later.',
+        confirmLabel: 'Deactivate',
+      })
+      if (!ok) return
+    }
+    const { error } = await supabase.from('vehicles').update({ active }).eq('id', v.id)
+    if (error) return ui.toast(error.message, 'error')
+    load()
+  }
+
+  if (printing) {
+    return (
+      <Labels
+        units={printing.map(v => ({ code: v.code, product: `${v.name}${v.plate ? ` · ${v.plate}` : ''}` }))}
+        onClose={() => setPrinting(null)}
+        backLabel="Back to vehicles"
+      />
+    )
+  }
+
+  const active = (vehicles ?? []).filter(v => v.active)
+  return (
+    <>
+      <Section title="Add a vehicle" description="Each vehicle gets a label (VEH-01, VEH-02…). Scan it on Check out / in to load or unload that vehicle.">
+        <form onSubmit={add} className="stack" style={{ gap: 14 }}>
+          <div className="form-row">
+            <label>
+              Name
+              <input required maxLength={40} placeholder="e.g. Van 2" value={name} onChange={e => setName(e.target.value)} />
+            </label>
+            <label>
+              Plate <span className="hint">optional</span>
+              <input maxLength={12} placeholder="e.g. ABC123" value={plate} onChange={e => setPlate(e.target.value.toUpperCase())} />
+            </label>
+          </div>
+          <div className="row end">
+            <button className="primary" disabled={saving || !name.trim()}>
+              <Icon name="plus" /> {saving ? 'Adding…' : 'Add vehicle'}
+            </button>
+          </div>
+        </form>
+      </Section>
+
+      <Section
+        flush
+        title="Vehicles"
+        actions={
+          active.length > 0 && (
+            <button className="secondary btn-sm" onClick={() => setPrinting(active)}>
+              <Icon name="printer" size={16} /> Print all labels
+            </button>
+          )
+        }
+      >
+        {vehicles === null ? (
+          <p className="muted" style={{ padding: 20 }}>
+            Loading…
+          </p>
+        ) : vehicles.length === 0 ? (
+          <p className="muted small" style={{ padding: 20 }}>
+            No vehicles yet.
+          </p>
+        ) : (
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>Vehicle</th>
+                  <th>Label</th>
+                  <th aria-label="Actions" />
+                </tr>
+              </thead>
+              <tbody>
+                {vehicles.map(v => (
+                  <tr key={v.id} className={v.active ? '' : 'late-row'}>
+                    <td className="primary-cell">
+                      {v.name}
+                      {v.plate && <div className="muted small mono">{v.plate}</div>}
+                      {!v.active && (
+                        <span className="show-sm">
+                          <Badge>Inactive</Badge>
+                        </span>
+                      )}
+                    </td>
+                    <td>
+                      <code>{v.code}</code> {!v.active && <span className="hide-sm"><Badge>Inactive</Badge></span>}
+                    </td>
+                    <td className="num">
+                      <div className="row" style={{ justifyContent: 'flex-end', gap: 14 }}>
+                        {v.active && (
+                          <button className="link" onClick={() => setPrinting([v])}>
+                            Print label
+                          </button>
+                        )}
+                        <button className={`link ${v.active ? 'danger-text' : ''}`} onClick={() => setActive(v, !v.active)}>
+                          {v.active ? 'Deactivate' : 'Reactivate'}
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}

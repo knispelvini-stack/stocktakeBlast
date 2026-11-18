@@ -15,6 +15,7 @@ Supabase to tell Auth the production URL.
    - `supabase/migrations/20261119000000_pin_access.sql`
    - `supabase/migrations/20261120000000_out_reference.sql`
    - `supabase/migrations/20261121000000_item_codes.sql`
+   - `supabase/migrations/20261122000000_vehicles.sql`
 
    Or with the CLI: `supabase link --project-ref <ref>` then `supabase db push`.
 4. **Project Settings → API**: copy the **Project URL** and the **anon / publishable** key.
