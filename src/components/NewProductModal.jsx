@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { supabase } from '../lib/supabase.js'
 import Icon from './ui/Icon.jsx'
 import { Modal, useUI } from './ui/ui.jsx'
-import { CATEGORIES, bannerStem, cleanStem, normalizeSize, pieceCode, suggestPrefix, PREFIX_RE } from '../lib/itemCodes.js'
+import { CATEGORIES, bannerStem, cleanStem, normalizeSize, pieceCode, suggestPrefix, PREFIX_RE, SIZE_CODE_RE } from '../lib/itemCodes.js'
 
 const NEW_THEME = '__new__'
 
@@ -16,6 +16,7 @@ export default function NewProductModal({ orgId, onClose, onCreated }) {
   const [prefixEdited, setPrefixEdited] = useState(false)
   const [w, setW] = useState('')
   const [h, setH] = useState('')
+  const [sizeCode, setSizeCode] = useState('')
   const [name, setName] = useState('')
   const [nameEdited, setNameEdited] = useState(false)
   const [sku, setSku] = useState('')
@@ -53,11 +54,11 @@ export default function NewProductModal({ orgId, onClose, onCreated }) {
   const size = normalizeSize(w, h)
   const preview =
     type === 'BAN'
-      ? bannerStem(effPrefix, size) && pieceCode(bannerStem(effPrefix, size), 1, 2)
+      ? bannerStem(effPrefix, size, sizeCode) && pieceCode(bannerStem(effPrefix, size, sizeCode), 1, 2)
       : type === 'CAS' || type === 'OTHER'
         ? cleanStem(stem) && pieceCode(cleanStem(stem), 1, digits)
         : ''
-  const autoName = type === 'BAN' && effThemeName && size ? `${effThemeName} banner ${size}` : ''
+  const autoName = type === 'BAN' && effThemeName && size ? `${effThemeName} banner ${sizeCode || size}` : ''
   const finalName = (nameEdited ? name : autoName || name).trim()
 
   const problems = []
@@ -68,6 +69,7 @@ export default function NewProductModal({ orgId, onClose, onCreated }) {
     if (newTheme && themes.some(t => t.name.toLowerCase() === themeName.trim().toLowerCase()))
       problems.push('That theme already exists — pick it from the list (one prefix per theme).')
     if (!size) problems.push('Enter the size (width × height).')
+    if (sizeCode && !SIZE_CODE_RE.test(sizeCode)) problems.push('Size code: a letter, then up to 3 letters/digits (e.g. C4).')
   }
   if (type === 'CAS' && !cleanStem(stem)) problems.push('Enter the code start (e.g. CAS).')
   if (!finalName) problems.push('Enter a product name.')
@@ -90,7 +92,7 @@ export default function NewProductModal({ orgId, onClose, onCreated }) {
         tId = data.id
       }
       const row = { org_id: orgId, name: finalName, sku: sku.trim() || null }
-      if (type === 'BAN') Object.assign(row, { category: 'BAN', theme_id: tId, size })
+      if (type === 'BAN') Object.assign(row, { category: 'BAN', theme_id: tId, size, size_code: sizeCode || null })
       if (type === 'CAS') Object.assign(row, { category: 'CAS', code_stem: cleanStem(stem), code_digits: digits })
       if (type === 'BLO') Object.assign(row, { category: 'BLO' })
       if (type === 'OTHER' && cleanStem(stem)) Object.assign(row, { code_stem: cleanStem(stem), code_digits: digits })
@@ -99,7 +101,7 @@ export default function NewProductModal({ orgId, onClose, onCreated }) {
         const msg =
           error.code === '23505'
             ? type === 'BAN'
-              ? `A ${effThemeName} banner ${size} already exists (same code ${bannerStem(effPrefix, size)}).`
+              ? `A ${effThemeName} banner with code ${bannerStem(effPrefix, size, sizeCode)} already exists.`
               : 'That SKU already exists.'
             : error.message
         return ui.toast(msg, 'error')
@@ -194,6 +196,18 @@ export default function NewProductModal({ orgId, onClose, onCreated }) {
                 <span>×</span>
                 <input type="text" inputMode="numeric" aria-label="Height" placeholder="5" value={h} onChange={e => setH(e.target.value.replace(/\D/g, ''))} />
               </div>
+              <span className="hint">Whole numbers: 4.5 m → 45.</span>
+            </label>
+            <label>
+              Size code <span className="hint">optional — a name your team uses for this size, e.g. C4</span>
+              <input
+                className="mono"
+                value={sizeCode}
+                maxLength={4}
+                placeholder="blank = size digits"
+                onChange={e => setSizeCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
+                data-testid="size-code"
+              />
             </label>
           </>
         )}

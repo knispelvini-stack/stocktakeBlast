@@ -127,13 +127,16 @@ async function scan(page, code) {
   await page.fill('[data-testid="import-text"]', 'type,name,theme,prefix,size,stem,quantity\nBAN,,Frozen,FRZ,3x4,,2\nOTHER,Chair,,,,CHR,3\nXXX,bad')
   await page.locator('.notice:has-text("Row 3")').waitFor()
   assert.ok(await page.locator('[data-testid="import-submit"]').isDisabled())
-  await page.fill('[data-testid="import-text"]', 'type,name,theme,prefix,size,stem,quantity\nBAN,,Frozen,FRZ,3x4,,2\nOTHER,Chair,,,,CHR,3')
+  await page.fill(
+    '[data-testid="import-text"]',
+    'type,name,theme,prefix,size,size_code,stem,quantity\nBAN,,Frozen,FRZ,3x4,,,2\nOTHER,Chair,,,,,CHR,3\nBAN,Frozen combo 4.5x6,Frozen,FRZ,45x6,C4,,1',
+  )
   await page.click('[data-testid="import-submit"]')
-  await toast('Imported 2 products and 5 labels')
-  const imported = (await q(`select code from units where code like 'BAN-FRZ34-%' or code like 'CHR-%' order by code`)).map(r => r.code)
-  assert.deepEqual(imported, ['BAN-FRZ34-01', 'BAN-FRZ34-02', 'CHR-01', 'CHR-02', 'CHR-03'])
+  await toast('Imported 3 products and 6 labels')
+  const imported = (await q(`select code from units where code like 'BAN-FRZ34-%' or code like 'BAN-FRZC4-%' or code like 'CHR-%' order by code`)).map(r => r.code)
+  assert.deepEqual(imported, ['BAN-FRZ34-01', 'BAN-FRZ34-02', 'BAN-FRZC4-01', 'CHR-01', 'CHR-02', 'CHR-03'])
   await page.locator('td:has-text("Frozen banner 3x4")').waitFor()
-  step('Import CSV: bad row blocked in preview; 2 products + 5 labels created (BAN-FRZ34-01..02, CHR-01..03)')
+  step('Import CSV: bad row blocked in preview; 3 products + 6 labels created (BAN-FRZ34-01..02, BAN-FRZC4-01 via size code, CHR-01..03)')
 
   // ── code search in Inventory
   await page.fill('input[aria-label="Search products"]', 'chr-0')

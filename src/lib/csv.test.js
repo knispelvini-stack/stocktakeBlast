@@ -20,7 +20,8 @@ test('parseCsv: semicolon files (Excel in some locales)', () => {
 test('template parses without errors', () => {
   const { rows, errors } = rowsToProducts(parseCsv(IMPORT_TEMPLATE))
   assert.deepEqual(errors, [])
-  assert.equal(rows.length, 4)
+  assert.equal(rows.length, 5)
+  assert.equal(rows[1].size_code, 'C4')
   assert.deepEqual(rows[0], { type: 'BAN', theme: 'Paw Patrol', prefix: 'PAW', size: '4x5', quantity: '3' })
 })
 
@@ -35,4 +36,8 @@ test('rowsToProducts: catches the obvious, names the row', () => {
     'Row 4: quantity must be a whole number',
   ])
   assert.match(rowsToProducts(parseCsv('foo,bar\n1,2')).errors[0], /column names/)
+  const sc = rowsToProducts(parseCsv('type,name,theme,size,size_code\nBAN,,Bluey,45x6,C4\nBAN,,Bluey,4x5,4C\nCAS,Castle,,,C4')).errors
+  assert.equal(sc.length, 2)
+  assert.match(sc[0], /^Row 2: size_code/)
+  assert.match(sc[1], /^Row 3: size_code/)
 })
