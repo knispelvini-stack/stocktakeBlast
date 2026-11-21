@@ -134,6 +134,18 @@ const codesOf = async name =>
   await page.screenshot({ path: `${OUT}/labels-3-qr.png` })
   step('print preview: code text on each label; barcode and QR both render')
 
+  // ── bulk: by search, and everything
+  await page.click('button.breadcrumb')
+  await page.waitForSelector('h1:has-text("Labels")')
+  await page.click('button:has-text("Clear list")')
+  await page.fill('[data-testid="label-match"]', 'paw45')
+  await page.locator('[data-testid="label-match-add"]:has-text("Add 3")').click()
+  assert.deepEqual(await page.$$eval('.list li .li-title', els => els.map(e => e.textContent)), ['BAN-PAW45-01', 'BAN-PAW45-03', 'BAN-PAW45-04'])
+  const [{ n: printable }] = await q(`select count(*)::int n from units where status <> 'retired'`)
+  await page.click('[data-testid="label-add-all"]')
+  await page.locator(`button:has-text("Print ${printable} labels")`).waitFor()
+  step(`bulk: search “paw45” adds the 3 live Paw Patrol 4x5 labels (retired -02 skipped); “Add every label” queues all ${printable}`)
+
   assert.deepEqual(errors, [], 'no page errors')
   console.log('\nALL LABEL E2E CHECKS PASSED')
   await browser.close()

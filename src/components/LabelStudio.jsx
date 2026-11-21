@@ -21,7 +21,18 @@ export default function LabelStudio({ engine, orgId, products, onBack, onCreated
   const [busy, setBusy] = useState(false)
   const [printing, setPrinting] = useState(false)
   const [allFor, setAllFor] = useState('')
+  const [match, setMatch] = useState('')
+  const [units, setUnits] = useState([])
 
+  // Every printable unit, from the device cache (works offline).
+  const reloadUnits = () =>
+    engine.listUnits(orgId).then(us => setUnits(us.filter(u => u.status !== 'retired').sort((a, b) => a.code.localeCompare(b.code))))
+  useEffect(() => {
+    reloadUnits()
+  }, [engine, orgId]) // eslint-disable-line react-hooks/exhaustive-deps
+  const m = match.trim().toUpperCase()
+  const matching = m ? units.filter(u => u.code.includes(m) || (u.product || '').toUpperCase().includes(m)) : []
+  const toItems = list => list.map(u => ({ code: u.code, product: u.product, status: u.status }))
   const coded = (products ?? []).filter(p => p.category !== 'BLO')
   const selected = coded.find(p => p.id === productId) ?? coded[0]
 
@@ -67,7 +78,7 @@ export default function LabelStudio({ engine, orgId, products, onBack, onCreated
     if (error) return ui.toast(!error.code ? 'Creating new labels needs a connection.' : error.message, 'error')
     addToQueue(data.map(u => ({ code: u.code, product: selected.name, status: u.status })))
     ui.toast(`${data.length} new code${data.length === 1 ? '' : 's'} created: ${data[0].code}${data.length > 1 ? ` … ${data[data.length - 1].code}` : ''}.`, 'ok')
-    engine.pullUnits(orgId).catch(() => {})
+    engine.pullUnits(orgId).then(reloadUnits).catch(() => {})
     onCreated?.()
   }
 
@@ -125,7 +136,7 @@ export default function LabelStudio({ engine, orgId, products, onBack, onCreated
           )}
         </Section>
 
-        <Section title="Reprint" description="Same code, new label. Scan the old label or type its code.">
+        <Section title="Existing labels" description="Print or reprint labels that already have a code (a reprint keeps the same code).">
           <form
             className="scan-input"
             onSubmit={e => {
@@ -154,6 +165,32 @@ export default function LabelStudio({ engine, orgId, products, onBack, onCreated
             </select>
             <button type="button" className="secondary" disabled={!allFor} onClick={() => addAllOf(allFor)}>
               Add
+            </button>
+          </div>
+          <div className="row" style={{ marginTop: 14 }}>
+            <input
+              placeholder="Or search: C4, 45-, Frozen, BAN-PAW…"
+              value={match}
+              onChange={e => setMatch(e.target.value)}
+              aria-label="Add labels matching"
+              data-testid="label-match"
+            />
+            <button
+              type="button"
+              className="secondary"
+              disabled={!matching.length}
+              onClick={() => {
+                addToQueue(toItems(matching))
+                setMatch('')
+              }}
+              data-testid="label-match-add"
+            >
+              Add {matching.length || ''}
+            </button>
+          </div>
+          <div className="row" style={{ marginTop: 14 }}>
+            <button type="button" className="ghost" disabled={!units.length} onClick={() => addToQueue(toItems(units))} data-testid="label-add-all">
+              <Icon name="plus" /> Add every label ({units.length})
             </button>
           </div>
         </Section>
