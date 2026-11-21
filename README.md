@@ -53,6 +53,7 @@ Every physical piece has one label with a meaningful code:
 | Type | Pattern | Example | Notes |
 |---|---|---|---|
 | Banner | `BAN-<THEME PREFIX><size>-NN` | `BAN-PAW45-01` = Banner, Paw Patrol, 4x5, piece 01 | A theme has exactly one prefix, used for every size. The database computes the stem. |
+| Banner, named size | `BAN-<THEME PREFIX><size code>-NN` | `BAN-PAWC4-01` = Paw Patrol, C4 combo (4.5 x 6) | Optional *size code* (a letter + up to 3 letters/digits) replaces the size digits. Real size still stored (4.5 → `45x6`). |
 | Castle | `CAS-NNN` | `CAS-001` | Scheme not final. Products sharing `CAS` share one numbering. |
 | Blower | entered by hand | `BLO-C3` | Scheme not final. |
 | Other | `<START>-NN`, or random | `TBL-01` / `8AJLGU62` | Blank start = old random 8-character codes. |
@@ -99,7 +100,7 @@ The owner registers vehicles in **Settings → Vehicles** (name, optional plate)
 
 ## Import (CSV)
 
-Inventory → **Import CSV** (owner). Columns: `type,name,sku,theme,prefix,size,stem,digits,quantity`
+Inventory → **Import CSV** (owner). Columns: `type,name,sku,theme,prefix,size,size_code,stem,digits,quantity`
 (download the template in the dialog). `type`: `BAN` (theme + size; prefix only for a new theme),
 `CAS`, `BLO` (quantity 0 — codes by hand), `OTHER` (optional stem, e.g. `TBL`). `quantity` labels are
 generated with the normal numbering. Everything is checked again in the database and imported

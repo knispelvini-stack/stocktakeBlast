@@ -444,6 +444,19 @@ select pg_temp.check(my_orgs()->0->>'scan_returns' = 'false', 'staff cannot chan
 select pg_temp.as_user('aaaaaaaa-0000-0000-0000-000000000001') \gset
 update orgs set scan_returns = true where id = :'org_a';
 
+-- ═══════════ banner size codes (4.5 x 6 combo = C4) ═══════════
+select pg_temp.as_user('aaaaaaaa-0000-0000-0000-000000000001') \gset
+insert into products (org_id, name, category, theme_id, size, size_code) values (:'org_a', 'Paw Patrol combo 4.5x6', 'BAN', :'paw', '45x6', ' c4 ') returning id as pc4, code_stem as stem_c4 \gset
+select pg_temp.check(:'stem_c4' = 'BAN-PAWC4', 'size code replaces the digits: BAN-PAWC4');
+select code as c4_code from generate_units(:'pc4', 1) \gset
+select pg_temp.check(:'c4_code' = 'BAN-PAWC4-01', 'labels BAN-PAWC4-01');
+select pg_temp.check(pg_temp.fails(format('insert into products (org_id, name, category, theme_id, size, size_code) values (%L, %L, %L, %L, %L, %L)', :'org_a', 'dup', 'BAN', :'paw', '6x6', 'C4')), 'same theme + size code twice refused');
+select pg_temp.check(pg_temp.fails(format('insert into products (org_id, name, category, theme_id, size, size_code) values (%L, %L, %L, %L, %L, %L)', :'org_a', 'bad', 'BAN', :'paw', '6x6', '4C')), 'size code must start with a letter');
+select pg_temp.check(pg_temp.fails(format('insert into products (org_id, name, size_code) values (%L, %L, %L)', :'org_a', 'not a banner', 'C4')), 'size code only for banners');
+select pg_temp.check(pg_temp.fails(format('update products set size_code = %L where id = %L', 'C5', :'pc4')), 'size code not editable');
+select import_products(:'org_a', '[{"type":"BAN","theme":"Bluey","size":"45x6","size_code":"c4","name":"Bluey combo 4.5x6","quantity":2}]'::jsonb) as imp \gset
+select pg_temp.check((select count(*) from units where code in ('BAN-BLUC4-01', 'BAN-BLUC4-02')) = 2, 'import with size_code → BAN-BLUC4-01..02');
+
 -- ═══════════ user B attacks org A ═══════════
 select pg_temp.as_user('bbbbbbbb-0000-0000-0000-000000000002') \gset
 select pg_temp.check((select count(*) from orgs) = 0, 'B sees no orgs');

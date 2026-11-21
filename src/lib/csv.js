@@ -36,13 +36,14 @@ export function parseCsv(text) {
   return rows.filter(r => r.some(f => f.trim() !== ''))
 }
 
-export const IMPORT_COLUMNS = ['type', 'name', 'sku', 'theme', 'prefix', 'size', 'stem', 'digits', 'quantity']
+export const IMPORT_COLUMNS = ['type', 'name', 'sku', 'theme', 'prefix', 'size', 'size_code', 'stem', 'digits', 'quantity']
 
-export const IMPORT_TEMPLATE = `type,name,sku,theme,prefix,size,stem,digits,quantity
-BAN,,,Paw Patrol,PAW,4x5,,,3
-CAS,Castle Blue 4x4,,,,,CAS,3,2
-BLO,Blower 1hp,BL-1,,,,,,0
-OTHER,Table 6ft,,,,,TBL,2,10
+export const IMPORT_TEMPLATE = `type,name,sku,theme,prefix,size,size_code,stem,digits,quantity
+BAN,,,Paw Patrol,PAW,4x5,,,,3
+BAN,Paw Patrol combo 4.5x6,,Paw Patrol,PAW,45x6,C4,,,1
+CAS,Castle Blue 4x4,,,,,,CAS,3,2
+BLO,Blower 1hp,BL-1,,,,,,,0
+OTHER,Table 6ft,,,,,,TBL,2,10
 `
 
 const TYPES = ['BAN', 'CAS', 'BLO', 'OTHER']
@@ -71,6 +72,8 @@ export function rowsToProducts(table) {
     if (r.type === 'BAN' && (!r.theme || !r.size)) errors.push(`Row ${n}: a banner needs theme and size`)
     if (r.type !== 'BAN' && !r.name) errors.push(`Row ${n}: name is required`)
     if (r.quantity && !/^\d+$/.test(r.quantity)) errors.push(`Row ${n}: quantity must be a whole number`)
+    if (r.size_code && (r.type !== 'BAN' || !/^[A-Za-z][A-Za-z0-9]{0,3}$/.test(r.size_code)))
+      errors.push(`Row ${n}: size_code is for banners only — a letter then up to 3 letters/digits (e.g. C4)`)
     if (r.type === 'BLO' && Number(r.quantity) > 0) errors.push(`Row ${n}: blower codes are added by hand — use quantity 0`)
     return r
   })
