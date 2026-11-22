@@ -489,10 +489,22 @@ export function createSyncEngine({
     return (await db.get('meta', `vehicles:${orgId}`)) ?? []
   }
 
+  // The server returns the newest 50. A synced local session in that range
+  // that the server no longer has was deleted there: drop it (and its scans),
+  // or the device keeps showing it and every scan fails "session not found".
   async function pullSessions(orgId) {
     const rows = await call('pull_sessions', { p_org: orgId })
-    const tx = db.transaction('sessions', 'readwrite')
-    for (const s of rows) await tx.store.put({ ...s, pending: false })
+    const tx = db.transaction(['sessions', 'scans'], 'readwrite')
+    const sessions = tx.objectStore('sessions')
+    const onServer = new Set(rows.map(s => s.id))
+    const oldest = rows.length >= 50 ? rows.reduce((m, s) => (s.created_at < m ? s.created_at : m), rows[0].created_at) : ''
+    for (const local of await sessions.index('org').getAll(orgId)) {
+      if (local.pending || onServer.has(local.id) || local.created_at < oldest) continue
+      await sessions.delete(local.id)
+      const scans = tx.objectStore('scans')
+      for (const sc of await scans.index('session').getAll(local.id)) await scans.delete(sc.id)
+    }
+    for (const s of rows) await sessions.put({ ...s, pending: false })
     await tx.done
     bump()
   }

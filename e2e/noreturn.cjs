@@ -125,7 +125,16 @@ async function eventually(fn, expected, ms = 15000) {
   await page.locator('.sidebar .sync-main').filter({ hasText: 'Synced' }).waitFor({ timeout: 20000 })
   await page.click('button:has-text("Finish stocktake")')
   await page.locator('.modal').filter({ hasText: 'loaded but not seen since' }).waitFor()
-  await page.click('.modal button:has-text("Finish")')
+  // "update stock" is off by default; with many missing it needs a second confirmation
+  await page.locator('[data-testid="finish-count"]:has-text("Finish without changing stock")').waitFor()
+  await page.check('[data-testid="apply-stock"]')
+  const finish = page.locator('[data-testid="finish-count"]')
+  await finish.filter({ hasText: /Finish and mark \d+ lost/ }).waitFor()
+  if (await page.locator('[data-testid="apply-sure"]').count()) {
+    assert.ok(await finish.isDisabled(), 'big loss needs the second tick')
+    await page.check('[data-testid="apply-sure"]')
+  }
+  await finish.click()
   await toast('not back (still out)')
   const st = Object.fromEntries((await q(`select id, status from units where id = any($1)`, [[x.id, y.id]])).map(r => [r.id, r.status]))
   assert.equal(st[x.id], 'in_stock', 'scanned → back in stock')

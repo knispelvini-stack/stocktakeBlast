@@ -343,6 +343,26 @@ test('stocktake when returns are not scanned: missing vs not back', () => {
   assert.deepEqual(r.extra.map(m => m.code), ['D', 'E'])
 })
 
+test('stocktakes deleted on the server disappear from the device (with their scans)', async () => {
+  const { engine, server, db } = await setup()
+  const sid = await engine.createSession({ orgId: ORG, name: 'Old' })
+  await engine.recordScan({ orgId: ORG, sessionId: sid, code: 'AAAA1111' })
+  await engine.flush() // synced: no longer pending
+  const pendingSid = await (async () => {
+    server.online = false
+    const id = await engine.createSession({ orgId: ORG, name: 'Offline, not synced' })
+    server.online = true
+    return id
+  })()
+  const orig = server.rpc
+  server.rpc = async (n, a) => (n === 'pull_sessions' ? { data: [], error: null, status: 200 } : orig(n, a))
+  await engine.pullSessions(ORG)
+  const ids = (await engine.listSessions(ORG)).map(s => s.id)
+  assert.ok(!ids.includes(sid), 'deleted on the server → gone here')
+  assert.ok(ids.includes(pendingSid), 'a session not synced yet is kept')
+  assert.equal((await db.getAllFromIndex('scans', 'session', sid)).length, 0, 'its scans are gone too')
+})
+
 test('scan into a closed session is refused locally', async () => {
   const { engine } = await setup()
   const sid = await engine.createSession({ orgId: ORG, name: 'x' })
