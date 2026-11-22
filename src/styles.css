@@ -391,6 +391,9 @@ button:disabled { opacity: 0.5; cursor: not-allowed; }
 .feed-actions { display: inline-flex; gap: 4px; flex-wrap: wrap; justify-content: flex-end; }
 .row-highlight td { background: var(--warn-bg); }
 .li-title.mono { white-space: nowrap; }
+/* Stocktake result lists scroll inside their panel instead of stretching the page. */
+.unit-list-body { max-height: 360px; overflow-y: auto; overscroll-behavior: contain; }
+.feed-panel .feed { overscroll-behavior: contain; }
 .unit-actions { display: grid; gap: 8px; }
 .unit-actions button { justify-content: flex-start; }
 .file-btn { display: inline-flex; flex-direction: row; align-items: center; gap: 8px; cursor: pointer; font-size: 14px; font-weight: 600; padding: 8px 14px; border-radius: var(--radius-sm); min-height: var(--control); border: 1px solid var(--border-strong); }
